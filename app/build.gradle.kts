@@ -7,12 +7,15 @@ android {
     namespace = "com.phonerelay.phonebridge"
     compileSdk = 34
 
+    val vCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 9
+    val vName = (project.findProperty("versionName") as? String) ?: "1.3.9"
+
     defaultConfig {
         applicationId = "com.phonerelay.phonebridge"
         minSdk = 24
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = vCode
+        versionName = vName
     }
 
     signingConfigs {

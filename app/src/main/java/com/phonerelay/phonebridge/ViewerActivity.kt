@@ -78,6 +78,7 @@ class ViewerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_viewer)
+        findViewById<TextView>(R.id.tvHeaderTitle)?.text = "Xperia Receiver • v${BuildConfig.VERSION_NAME}"
 
         tvDeviceModel = findViewById(R.id.tvDeviceModel)
         tvOnlineStatus = findViewById(R.id.tvOnlineStatus)

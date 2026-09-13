@@ -65,6 +65,7 @@ class HostActivity : AppCompatActivity() {
 
         val tvPairCode = findViewById<TextView>(R.id.tvPairCode)
         tvPairCode.text = "Pair Code: ${BridgePreferences.getPairCode(this)}"
+        findViewById<TextView>(R.id.tvHeaderTitle)?.text = "Realme Host • v${BuildConfig.VERSION_NAME}"
 
         findViewById<Button>(R.id.btnSwitchRole).setOnClickListener {
             startActivity(Intent(this, ModeSelectionActivity::class.java))

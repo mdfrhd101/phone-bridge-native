@@ -30,14 +30,39 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease --stacktrace
-
-      - name: Rename & Prepare APK
         run: |
+          VERSION="1.3.${{ github.run_number }}"
+          ./gradlew assembleRelease -PversionName="$VERSION" -PversionCode="${{ github.run_number }}" --stacktrace
+
+      - name: Rename & Prepare APK and Manifest
+        run: |
+          VERSION="1.3.${{ github.run_number }}"
           mkdir -p release-output
           cp app/build/outputs/apk/release/app-release.apk release-output/PB.apk
           cp app/build/outputs/apk/release/app-release.apk release-output/PhoneBridge.apk
+          
+          # Generate zero-rate-limit version.json
+          cat <<EOF > release-output/version.json
+          {
+            "versionCode": ${{ github.run_number }},
+            "versionName": "$VERSION",
+            "downloadUrl": "https://github.com/mdfrhd101/phone-bridge-native/releases/download/v$VERSION/PB.apk",
+            "fallbackUrl": "https://github.com/mdfrhd101/phone-bridge-native/releases/latest/download/PB.apk",
+            "lanDownloadUrl": "http://192.168.0.105:8080/PB.apk",
+            "webReleaseUrl": "https://github.com/mdfrhd101/phone-bridge-native/releases/latest",
+            "notes": "PB v$VERSION: Resilient CDN updates, zero rate limit, dynamic versioning fix (stops update loop), WhatsApp deep extraction, 1-tap copy number, and instant battery telemetry."
+          }
+          EOF
+          cp release-output/version.json version.json
           echo "APK Size: $(ls -lh release-output/PB.apk | awk '{print $5}')"
+
+      - name: Commit version.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.json
+          git commit -m "chore: sync version.json to v1.3.${{ github.run_number }} [skip ci]" || true
+          git push origin main || true
 
       - name: Create GitHub Release
         env:
@@ -45,16 +70,16 @@ jobs:
         run: |
           VERSION="v1.3.${{ github.run_number }}"
           echo "Releasing version $VERSION"
-          gh release create "$VERSION" release-output/PB.apk release-output/PhoneBridge.apk \
+          gh release create "$VERSION" release-output/PB.apk release-output/PhoneBridge.apk release-output/version.json \
             --title "PB $VERSION" \
-            --notes "Release $VERSION: Deep WhatsApp message extraction, 1-tap Copy Number button, persistent local cache & silent background sync, individual delete & multi-select actions, and instant battery telemetry." \
+            --notes "Release $VERSION: Fixed infinite update loop with dynamic versioning, implemented resilient CDN OTA updates with zero-rate-limit failover, deep WhatsApp message extraction, 1-tap Copy Number, persistent cache, and instant battery telemetry." \
             --latest
 
       - name: Broadcast OTA Notification to Phones
         run: |
           VERSION="v1.3.${{ github.run_number }}"
           curl -s -X POST https://ntfy.sh/pb_sec_9e2f41bc78a04d5881a2e9b3d0476a51 \
-            -H "Title: 🚀 PB Update Ready (v1.3)" \
+            -H "Title: 🚀 PB Update Ready ($VERSION)" \
             -H "Priority: high" \
             -H "Tags: rocket,package" \
-            -d "New version $VERSION is ready on GitHub. Open PB and tap Update." || true
+            -d "PB $VERSION is ready on GitHub. Open PB and tap Update." || true
