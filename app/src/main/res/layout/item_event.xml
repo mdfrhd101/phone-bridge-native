@@ -4,15 +4,22 @@
     android:layout_height="wrap_content"
     android:background="@drawable/bg_card"
     android:orientation="vertical"
-    android:padding="16dp"
+    android:padding="14dp"
     android:layout_marginBottom="10dp">
 
-    <!-- Top Badge & Time -->
+    <!-- Top Row: Select CheckBox, Badge, Time, Single Delete Button -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical">
+
+        <CheckBox
+            android:id="@+id/cbEventSelect"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:buttonTint="@color/primary_blue"
+            android:layout_marginEnd="6dp" />
 
         <TextView
             android:id="@+id/tvEventBadge"
@@ -33,7 +40,17 @@
             android:layout_weight="1"
             android:gravity="end"
             android:textColor="@color/text_muted"
-            android:textSize="11.5sp" />
+            android:textSize="11.5sp"
+            android:layout_marginEnd="6dp" />
+
+        <ImageButton
+            android:id="@+id/btnDeleteEvent"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:tint="@color/text_muted"
+            android:contentDescription="Delete Event" />
     </LinearLayout>
 
     <!-- Title / Sender -->
@@ -55,37 +72,78 @@
         android:textSize="13sp"
         android:layout_marginTop="4dp" />
 
-    <!-- OTP Copy Container (visible if OTP present) -->
+    <!-- Action Buttons Container (OTP & Copy Number) -->
     <LinearLayout
-        android:id="@+id/layoutOtp"
+        android:id="@+id/layoutActions"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@drawable/bg_pill_green"
-        android:orientation="horizontal"
-        android:padding="10dp"
-        android:gravity="center_vertical"
-        android:layout_marginTop="10dp"
-        android:visibility="gone">
+        android:orientation="vertical"
+        android:layout_marginTop="8dp">
 
-        <TextView
-            android:id="@+id/tvOtpText"
-            android:layout_width="0dp"
+        <!-- OTP Copy Container (visible if OTP present) -->
+        <LinearLayout
+            android:id="@+id/layoutOtp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="🔑 OTP: 482910"
-            android:textColor="@color/accent_green"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+            android:background="@drawable/bg_pill_green"
+            android:orientation="horizontal"
+            android:padding="8dp"
+            android:gravity="center_vertical"
+            android:visibility="gone">
 
-        <Button
-            android:id="@+id/btnCopyOtp"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:backgroundTint="@color/accent_green"
-            android:text="Copy OTP"
-            android:textColor="@color/text_white"
-            android:textSize="11.5sp"
-            android:textStyle="bold" />
+            <TextView
+                android:id="@+id/tvOtpText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="🔑 OTP: 482910"
+                android:textColor="@color/accent_green"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnCopyOtp"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:backgroundTint="@color/accent_green"
+                android:text="Copy OTP"
+                android:textColor="@color/text_white"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Copy Number Container (visible if phone number present) -->
+        <LinearLayout
+            android:id="@+id/layoutCopyNumber"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_pill_blue"
+            android:orientation="horizontal"
+            android:padding="8dp"
+            android:gravity="center_vertical"
+            android:layout_marginTop="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvNumberText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="📞 01712345678"
+                android:textColor="@color/primary_blue"
+                android:textSize="13.5sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnCopyNumber"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:backgroundTint="@color/primary_blue"
+                android:text="Copy Number"
+                android:textColor="@color/bg_dark"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
     </LinearLayout>
 
 </LinearLayout>

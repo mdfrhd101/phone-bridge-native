@@ -27,6 +27,38 @@ class BridgeForegroundService : Service() {
         const val NOTIFICATION_ID = 1001
         private var isRunning = false
         fun isServiceRunning(): Boolean = isRunning
+
+        fun sendInstantTelemetry(context: Context) {
+            Thread {
+                try {
+                    val batteryIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                    val level = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                    val scale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+                    val status = batteryIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+                    val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                            status == BatteryManager.BATTERY_STATUS_FULL
+                    val pct = if (level != -1 && scale != -1) (level * 100 / scale) else -1
+
+                    val network = getNetworkType(context)
+                    FirebaseRelay.updateTelemetry(context, pct, isCharging, network)
+                } catch (_: Exception) {}
+            }.start()
+        }
+
+        fun getNetworkType(context: Context): String {
+            return try {
+                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val network = cm.activeNetwork ?: return "Offline"
+                val caps = cm.getNetworkCapabilities(network) ?: return "Offline"
+                when {
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WiFi"
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Mobile Data"
+                    else -> "Connected"
+                }
+            } catch (e: Exception) {
+                "Unknown"
+            }
+        }
     }
 
     private var batteryReceiver: BroadcastReceiver? = null
@@ -66,6 +98,7 @@ class BridgeForegroundService : Service() {
 
         registerBatteryReceiver()
         registerLiveCallMonitor()
+        sendInstantTelemetry(this)
         startTelemetrySyncLoop()
 
         return START_STICKY
@@ -88,7 +121,7 @@ class BridgeForegroundService : Service() {
                                     lastCallEventTime = now
                                     wasRinging = true
                                     ringTime = now
-                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, null)
+                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, null, isCallEnded = false)
                                     FirebaseRelay.sendEvent(
                                         context = this@BridgeForegroundService,
                                         eventType = "CALL_RINGING",
@@ -105,7 +138,7 @@ class BridgeForegroundService : Service() {
                             TelephonyManager.CALL_STATE_IDLE -> {
                                 if (wasRinging && (now - ringTime > 1000)) {
                                     val dur = ((now - ringTime) / 1000).coerceAtLeast(1)
-                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, null)
+                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, null, isCallEnded = true)
                                     FirebaseRelay.sendEvent(
                                         context = this@BridgeForegroundService,
                                         eventType = "CALL_MISSED",
@@ -137,7 +170,7 @@ class BridgeForegroundService : Service() {
                                     lastCallEventTime = now
                                     wasRinging = true
                                     ringTime = now
-                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, incomingNumber)
+                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, incomingNumber, isCallEnded = false)
                                     FirebaseRelay.sendEvent(
                                         context = this@BridgeForegroundService,
                                         eventType = "CALL_RINGING",
@@ -154,7 +187,7 @@ class BridgeForegroundService : Service() {
                             TelephonyManager.CALL_STATE_IDLE -> {
                                 if (wasRinging && (now - ringTime > 1000)) {
                                     val dur = ((now - ringTime) / 1000).coerceAtLeast(1)
-                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, incomingNumber)
+                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, incomingNumber, isCallEnded = true)
                                     FirebaseRelay.sendEvent(
                                         context = this@BridgeForegroundService,
                                         eventType = "CALL_MISSED",
@@ -192,6 +225,9 @@ class BridgeForegroundService : Service() {
                 val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
                         status == BatteryManager.BATTERY_STATUS_FULL
                 val batteryPct = if (level != -1 && scale != -1) (level * 100 / scale) else -1
+
+                // Immediately update live telemetry to Xperia
+                FirebaseRelay.updateTelemetry(context, batteryPct, isCharging, getNetworkType(context))
 
                 when (action) {
                     Intent.ACTION_POWER_CONNECTED -> {
@@ -264,21 +300,6 @@ class BridgeForegroundService : Service() {
                 }
             }
         }.apply { start() }
-    }
-
-    private fun getNetworkType(context: Context): String {
-        return try {
-            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val network = cm.activeNetwork ?: return "Offline"
-            val caps = cm.getNetworkCapabilities(network) ?: return "Offline"
-            when {
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WiFi"
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Mobile Data"
-                else -> "Connected"
-            }
-        } catch (e: Exception) {
-            "Unknown"
-        }
     }
 
     private fun createNotificationChannel() {

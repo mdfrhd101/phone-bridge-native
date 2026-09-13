@@ -190,6 +190,59 @@
             android:layout_marginStart="4dp" />
     </LinearLayout>
 
+    <!-- Selection & Delete Action Bar -->
+    <LinearLayout
+        android:id="@+id/layoutSelectionBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="8dp"
+        android:paddingHorizontal="4dp">
+
+        <CheckBox
+            android:id="@+id/cbSelectAll"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Select All"
+            android:textColor="@color/text_muted"
+            android:textSize="12sp"
+            android:buttonTint="@color/primary_blue" />
+
+        <TextView
+            android:id="@+id/tvSelectionCount"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="@color/text_muted"
+            android:textSize="12sp"
+            android:layout_marginStart="6dp"
+            android:text="" />
+
+        <Button
+            android:id="@+id/btnDeleteSelected"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:backgroundTint="@color/accent_red"
+            android:text="Delete"
+            android:textColor="@color/text_white"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:visibility="gone"
+            android:layout_marginEnd="6dp"
+            android:paddingHorizontal="10dp" />
+
+        <Button
+            android:id="@+id/btnClearAll"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:text="Clear All"
+            android:textSize="11sp"
+            android:textColor="@color/accent_red"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:paddingHorizontal="6dp" />
+    </LinearLayout>
+
     <!-- Event Feed with SwipeRefresh -->
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
         android:id="@+id/swipeRefresh"

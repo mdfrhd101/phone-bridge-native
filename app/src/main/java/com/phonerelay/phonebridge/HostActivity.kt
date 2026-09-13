@@ -84,8 +84,20 @@ class HostActivity : AppCompatActivity() {
         rvLogs.layoutManager = LinearLayoutManager(this)
 
         val isRunning = BridgeForegroundService.isServiceRunning()
-        switchService.isChecked = isRunning
-        updateStatusText(isRunning)
+        if (!isRunning) {
+            val serviceIntent = Intent(this, BridgeForegroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+            switchService.isChecked = true
+            updateStatusText(true)
+        } else {
+            switchService.isChecked = true
+            updateStatusText(true)
+        }
+        BridgeForegroundService.sendInstantTelemetry(this)
 
         switchService.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
@@ -264,6 +276,7 @@ class HostActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        BridgeForegroundService.sendInstantTelemetry(this)
         refreshLogsAndStatus()
         handler.post(refreshRunnable)
         AppUpdater.checkForUpdate(this, silentIfNone = true) { info ->

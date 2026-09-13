@@ -22,12 +22,19 @@ class CallReceiver : BroadcastReceiver() {
         private var wasAnswered = false
         private var lastRingEventTime: Long = 0
 
-        fun resolveLatestCaller(context: Context, rawNumber: String?): Pair<String, String> {
+        fun resolveLatestCaller(
+            context: Context,
+            rawNumber: String?,
+            isCallEnded: Boolean = false
+        ): Pair<String, String> {
             var number = rawNumber
             var contactName = ""
 
-            // If number is missing (common on Android 10+ without explicit runtime permissions), try CallLog
-            if (number.isNullOrBlank() || number == "Unknown") {
+            // ONLY query CallLog if the call has actually ENDED.
+            // NEVER query CallLog while the call is still ringing, because Android does not
+            // write a ringing call to CallLog until it finishes — querying while ringing
+            // erroneously returns the PREVIOUS historical caller!
+            if (isCallEnded && (number.isNullOrBlank() || number == "Unknown")) {
                 try {
                     if (ContextCompat.checkSelfPermission(
                             context,
@@ -58,8 +65,13 @@ class CallReceiver : BroadcastReceiver() {
                 contactName = getContactName(context, number!!)
             }
 
-            val finalNumber = if (!number.isNullOrBlank()) number!! else "Incoming Caller"
-            val finalDisplayName = if (contactName.isNotBlank()) "$contactName ($finalNumber)" else finalNumber
+            val finalNumber = if (!number.isNullOrBlank() && number != "Unknown") number!! else ""
+            val finalDisplayName = when {
+                contactName.isNotBlank() && finalNumber.isNotBlank() -> "$contactName ($finalNumber)"
+                contactName.isNotBlank() -> contactName
+                finalNumber.isNotBlank() -> finalNumber
+                else -> "Incoming Call"
+            }
             return Pair(finalNumber, finalDisplayName)
         }
 
@@ -110,14 +122,14 @@ class CallReceiver : BroadcastReceiver() {
                 ringStartTime = now
                 ringingNumber = incomingNumber ?: ringingNumber
 
-                val (number, displayName) = resolveLatestCaller(context, ringingNumber)
+                val (number, displayName) = resolveLatestCaller(context, ringingNumber, isCallEnded = false)
 
                 FirebaseRelay.sendEvent(
                     context = context,
                     eventType = "CALL_RINGING",
                     title = "Incoming Call: $displayName",
-                    body = "Phone is currently ringing at home ($number)",
-                    sender = displayName,
+                    body = if (number.isNotBlank()) "Phone is currently ringing at home ($number)" else "Phone is currently ringing at home",
+                    sender = if (number.isNotBlank()) number else displayName,
                     extra = timestamp
                 )
             }
@@ -135,14 +147,14 @@ class CallReceiver : BroadcastReceiver() {
                             ((System.currentTimeMillis() - ringStartTime) / 1000).coerceAtLeast(1)
                         } else 0
 
-                        val (number, displayName) = resolveLatestCaller(context, ringingNumber)
+                        val (number, displayName) = resolveLatestCaller(context, ringingNumber, isCallEnded = true)
 
                         FirebaseRelay.sendEvent(
                             context = context,
                             eventType = "CALL_MISSED",
                             title = "Missed Call: $displayName",
                             body = "Rang for ${durationSeconds}s without being answered.",
-                            sender = displayName,
+                            sender = if (number.isNotBlank()) number else displayName,
                             extra = "${durationSeconds}s"
                         )
                     }

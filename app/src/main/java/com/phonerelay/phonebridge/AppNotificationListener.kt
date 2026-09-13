@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import androidx.core.app.NotificationCompat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,26 +36,91 @@ class AppNotificationListener : NotificationListenerService() {
 
         val notification = sbn.notification ?: return
 
+        // Skip ongoing system notifications (e.g. music playing, background service progress)
         val isOngoing = (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0
         if (isOngoing) return
 
+        val isGroupSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
+
         val extras = notification.extras ?: return
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
-            ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+        val appName = getAppLabel(packageName)
+        val timestamp = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+
+        var title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim() ?: ""
+        val convoTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString()?.trim() ?: ""
+        var text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+            ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
             ?: ""
+
+        // 1. Deep extraction using AndroidX NotificationCompat.MessagingStyle (WhatsApp, Telegram, Google Messages)
+        try {
+            val messagingStyle = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)
+            if (messagingStyle != null) {
+                val msgs = messagingStyle.messages
+                if (msgs.isNotEmpty()) {
+                    val lines = msgs.mapNotNull { msg ->
+                        val senderName = msg.person?.name?.toString()
+                            ?: msg.sender?.toString()
+                            ?: ""
+                        val msgText = msg.text?.toString()?.trim() ?: ""
+                        if (msgText.isNotBlank()) {
+                            if (senderName.isNotBlank() && senderName != title) {
+                                "$senderName: $msgText"
+                            } else {
+                                msgText
+                            }
+                        } else null
+                    }
+                    if (lines.isNotEmpty()) {
+                        text = lines.joinToString("\n")
+                    }
+                }
+                if (messagingStyle.conversationTitle != null && messagingStyle.conversationTitle.toString().isNotBlank()) {
+                    if (convoTitle.isBlank()) {
+                        title = messagingStyle.conversationTitle.toString().trim()
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 2. Fallback: Multi-line notifications (Notification.EXTRA_TEXT_LINES)
+        val summaryRegex = Regex("""^\d+\s+(new\s+)?messages?(\s+from\s+\d+\s+chats?)?""", RegexOption.IGNORE_CASE)
+        if (text.isBlank() || summaryRegex.matches(text)) {
+            val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            if (textLines != null && textLines.isNotEmpty()) {
+                val linesJoined = textLines.mapNotNull { it?.toString()?.trim() }
+                    .filter { it.isNotBlank() }
+                    .joinToString("\n")
+                if (linesJoined.isNotBlank()) {
+                    text = linesJoined
+                }
+            }
+        }
+
+        // 3. Skip generic summary wrapper notifications like "1 messages from 2 chats" or "2 new messages"
+        if (summaryRegex.matches(text) && isGroupSummary) {
+            return
+        }
+        if (title.equals("WhatsApp", ignoreCase = true) && (summaryRegex.matches(text) || text.isBlank())) {
+            return
+        }
 
         if (title.isBlank() && text.isBlank()) return
 
-        val appName = getAppLabel(packageName)
-        val timestamp = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+        // Format clean, descriptive title
+        val finalTitle = when {
+            convoTitle.isNotBlank() && convoTitle != title && title.isNotBlank() -> "$appName • $convoTitle ($title)"
+            convoTitle.isNotBlank() -> "$appName • $convoTitle"
+            title.isNotBlank() -> "$appName: $title"
+            else -> appName
+        }
 
         FirebaseRelay.sendEvent(
             context = applicationContext,
             eventType = "NOTIFICATION",
-            title = "$appName: $title",
+            title = finalTitle,
             body = text,
-            sender = appName,
+            sender = if (title.isNotBlank()) title else convoTitle,
             extra = timestamp
         )
     }

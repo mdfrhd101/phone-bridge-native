@@ -16,10 +16,13 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -44,9 +47,16 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var btnFilterCalls: Button
     private lateinit var btnFilterNotif: Button
 
+    private lateinit var cbSelectAll: CheckBox
+    private lateinit var tvSelectionCount: TextView
+    private lateinit var btnDeleteSelected: Button
+    private lateinit var btnClearAll: Button
+
     private var allEvents = listOf<NativeEvent>()
     private var currentFilter = "ALL"
     private val handler = Handler(Looper.getMainLooper())
+
+    private lateinit var eventAdapter: EventAdapter
 
     private val notifPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -54,13 +64,13 @@ class ViewerActivity : AppCompatActivity() {
 
     private val newEventReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            syncData()
+            syncData(isManual = false)
         }
     }
 
     private val pollRunnable = object : Runnable {
         override fun run() {
-            syncData()
+            syncData(isManual = false)
             handler.postDelayed(this, 5000)
         }
     }
@@ -82,8 +92,39 @@ class ViewerActivity : AppCompatActivity() {
         btnFilterCalls = findViewById(R.id.btnFilterCalls)
         btnFilterNotif = findViewById(R.id.btnFilterNotif)
 
+        cbSelectAll = findViewById(R.id.cbSelectAll)
+        tvSelectionCount = findViewById(R.id.tvSelectionCount)
+        btnDeleteSelected = findViewById(R.id.btnDeleteSelected)
+        btnClearAll = findViewById(R.id.btnClearAll)
+
         rvEvents.layoutManager = LinearLayoutManager(this)
 
+        // Initialize adapter with local cache right away (screen is never blank)
+        allEvents = EventCache.loadEvents(this)
+        eventAdapter = EventAdapter(
+            onCopyOtp = { otp ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("OTP", otp))
+                Toast.makeText(this, "OTP $otp copied!", Toast.LENGTH_SHORT).show()
+            },
+            onCopyNumber = { number ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Phone Number", number))
+                Toast.makeText(this, "Number $number copied!", Toast.LENGTH_SHORT).show()
+            },
+            onDeleteSingle = { event ->
+                allEvents = EventCache.deleteEvent(this, event)
+                updateList()
+                Toast.makeText(this, "Notification deleted", Toast.LENGTH_SHORT).show()
+            },
+            onSelectionChanged = { count ->
+                updateSelectionToolbar(count)
+            }
+        )
+        rvEvents.adapter = eventAdapter
+        eventAdapter.setEvents(getFilteredEvents())
+
+        // Top Buttons
         findViewById<Button>(R.id.btnViewerSettings).setOnClickListener {
             startActivity(Intent(this, ModeSelectionActivity::class.java))
             finish()
@@ -95,23 +136,60 @@ class ViewerActivity : AppCompatActivity() {
             }
         }
 
+        // SwipeRefresh for manual user pull
         swipeRefresh.setOnRefreshListener {
-            syncData()
+            syncData(isManual = true)
         }
 
+        // Filter Buttons
         btnFilterAll.setOnClickListener { setFilter("ALL") }
         btnFilterSms.setOnClickListener { setFilter("SMS") }
         btnFilterCalls.setOnClickListener { setFilter("CALL") }
         btnFilterNotif.setOnClickListener { setFilter("NOTIF") }
 
-        // Request notification permission on Android 13+ so heads-up alerts appear on Xperia
+        // Selection Actions
+        cbSelectAll.setOnClickListener {
+            if (cbSelectAll.isChecked) {
+                eventAdapter.selectAll()
+            } else {
+                eventAdapter.deselectAll()
+            }
+        }
+
+        btnDeleteSelected.setOnClickListener {
+            val selected = eventAdapter.getSelectedEvents()
+            if (selected.isNotEmpty()) {
+                allEvents = EventCache.deleteEvents(this, selected)
+                eventAdapter.deselectAll()
+                cbSelectAll.isChecked = false
+                updateList()
+                Toast.makeText(this, "${selected.size} notifications deleted", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        btnClearAll.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Clear All Notifications")
+                .setMessage("Are you sure you want to remove all notification history from the viewer?")
+                .setPositiveButton("Clear All") { _, _ ->
+                    allEvents = EventCache.clearAll(this)
+                    eventAdapter.deselectAll()
+                    cbSelectAll.isChecked = false
+                    updateList()
+                    Toast.makeText(this, "All notifications cleared", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+
+        // Notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
 
-        // Start background receiver service so Xperia receives calls & OTPs even when app closed
+        // Background service for heads-up alerts on Xperia
         val serviceIntent = Intent(this, ViewerForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)
@@ -119,7 +197,8 @@ class ViewerActivity : AppCompatActivity() {
             startService(serviceIntent)
         }
 
-        syncData()
+        // Initial fetch
+        syncData(isManual = false)
     }
 
     private fun setFilter(filter: String) {
@@ -134,10 +213,37 @@ class ViewerActivity : AppCompatActivity() {
         btnFilterCalls.setTextColor(getColor(if (filter == "CALL") R.color.bg_dark else R.color.text_muted))
         btnFilterNotif.setTextColor(getColor(if (filter == "NOTIF") R.color.bg_dark else R.color.text_muted))
 
+        eventAdapter.deselectAll()
+        cbSelectAll.isChecked = false
         updateList()
     }
 
-    private fun syncData() {
+    private fun getFilteredEvents(): List<NativeEvent> {
+        return when (currentFilter) {
+            "SMS" -> allEvents.filter { it.type == "SMS" }
+            "CALL" -> allEvents.filter { it.type.startsWith("CALL") }
+            "NOTIF" -> allEvents.filter { it.type == "NOTIFICATION" }
+            else -> allEvents
+        }
+    }
+
+    private fun updateList() {
+        eventAdapter.setEvents(getFilteredEvents())
+    }
+
+    private fun updateSelectionToolbar(count: Int) {
+        if (count > 0) {
+            tvSelectionCount.text = "$count selected"
+            btnDeleteSelected.visibility = View.VISIBLE
+            btnDeleteSelected.text = "Delete ($count)"
+        } else {
+            tvSelectionCount.text = ""
+            btnDeleteSelected.visibility = View.GONE
+            cbSelectAll.isChecked = false
+        }
+    }
+
+    private fun syncData(isManual: Boolean = false) {
         FirebaseRelay.fetchTelemetry(this) { telemetry ->
             runOnUiThread {
                 if (telemetry != null) {
@@ -166,28 +272,17 @@ class ViewerActivity : AppCompatActivity() {
             }
         }
 
-        FirebaseRelay.fetchEvents(this) { events ->
+        FirebaseRelay.fetchEvents(this) { incoming ->
             runOnUiThread {
-                swipeRefresh.isRefreshing = false
-                allEvents = events
-                updateList()
+                if (isManual) {
+                    swipeRefresh.isRefreshing = false
+                }
+                if (incoming.isNotEmpty()) {
+                    // Smart deduplicated merge with local cache
+                    allEvents = EventCache.mergeEvents(this, incoming)
+                    updateList()
+                }
             }
-        }
-    }
-
-    private fun updateList() {
-        val filtered = when (currentFilter) {
-            "SMS" -> allEvents.filter { it.type == "SMS" }
-            "CALL" -> allEvents.filter { it.type.startsWith("CALL") }
-            "NOTIF" -> allEvents.filter { it.type == "NOTIFICATION" }
-            else -> allEvents
-        }
-
-        rvEvents.adapter = EventAdapter(filtered) { otp ->
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("OTP", otp)
-            clipboard.setPrimaryClip(clip)
-            Toast.makeText(this, "OTP $otp copied to clipboard!", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -213,18 +308,58 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     class EventAdapter(
-        private val events: List<NativeEvent>,
-        private val onCopyOtp: (String) -> Unit
+        private val onCopyOtp: (String) -> Unit,
+        private val onCopyNumber: (String) -> Unit,
+        private val onDeleteSingle: (NativeEvent) -> Unit,
+        private val onSelectionChanged: (Int) -> Unit
     ) : RecyclerView.Adapter<EventAdapter.ViewHolder>() {
 
+        private var events = listOf<NativeEvent>()
+        private val selectedKeys = mutableSetOf<String>()
+
+        fun setEvents(newEvents: List<NativeEvent>) {
+            events = newEvents
+            notifyDataSetChanged()
+        }
+
+        fun selectAll() {
+            selectedKeys.clear()
+            for (ev in events) {
+                selectedKeys.add(getEventKey(ev))
+            }
+            notifyDataSetChanged()
+            onSelectionChanged(selectedKeys.size)
+        }
+
+        fun deselectAll() {
+            selectedKeys.clear()
+            notifyDataSetChanged()
+            onSelectionChanged(0)
+        }
+
+        fun getSelectedEvents(): Set<NativeEvent> {
+            return events.filter { selectedKeys.contains(getEventKey(it)) }.toSet()
+        }
+
+        private fun getEventKey(ev: NativeEvent): String {
+            return if (ev.id.isNotBlank()) ev.id else "${ev.type}_${ev.title}_${ev.timestamp}"
+        }
+
         class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+            val cbSelect: CheckBox = view.findViewById(R.id.cbEventSelect)
             val tvBadge: TextView = view.findViewById(R.id.tvEventBadge)
             val tvTime: TextView = view.findViewById(R.id.tvEventTime)
+            val btnDelete: ImageButton = view.findViewById(R.id.btnDeleteEvent)
             val tvTitle: TextView = view.findViewById(R.id.tvEventTitle)
             val tvBody: TextView = view.findViewById(R.id.tvEventBody)
+
             val layoutOtp: LinearLayout = view.findViewById(R.id.layoutOtp)
             val tvOtpText: TextView = view.findViewById(R.id.tvOtpText)
             val btnCopyOtp: Button = view.findViewById(R.id.btnCopyOtp)
+
+            val layoutCopyNumber: LinearLayout = view.findViewById(R.id.layoutCopyNumber)
+            val tvNumberText: TextView = view.findViewById(R.id.tvNumberText)
+            val btnCopyNumber: Button = view.findViewById(R.id.btnCopyNumber)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -235,7 +370,23 @@ class ViewerActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val ev = events[position]
             val context = holder.itemView.context
+            val key = getEventKey(ev)
 
+            // Selection CheckBox
+            holder.cbSelect.setOnCheckedChangeListener(null)
+            holder.cbSelect.isChecked = selectedKeys.contains(key)
+            holder.cbSelect.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) selectedKeys.add(key) else selectedKeys.remove(key)
+                onSelectionChanged(selectedKeys.size)
+            }
+
+            // Single Delete Button
+            holder.btnDelete.setOnClickListener {
+                selectedKeys.remove(key)
+                onDeleteSingle(ev)
+            }
+
+            // Event Badges
             val isCall = ev.type.startsWith("CALL")
             val isMissed = ev.type == "CALL_MISSED"
             val isNotif = ev.type == "NOTIFICATION"
@@ -263,12 +414,23 @@ class ViewerActivity : AppCompatActivity() {
             holder.tvTitle.text = ev.title
             holder.tvBody.text = ev.body
 
+            // OTP Container
             if (ev.otp.isNotBlank()) {
                 holder.layoutOtp.visibility = View.VISIBLE
                 holder.tvOtpText.text = "🔑 OTP: ${ev.otp}"
                 holder.btnCopyOtp.setOnClickListener { onCopyOtp(ev.otp) }
             } else {
                 holder.layoutOtp.visibility = View.GONE
+            }
+
+            // Phone Number Container
+            val extractedNumber = PhoneNumberHelper.extractNumber(ev)
+            if (!extractedNumber.isNullOrBlank()) {
+                holder.layoutCopyNumber.visibility = View.VISIBLE
+                holder.tvNumberText.text = "📞 $extractedNumber"
+                holder.btnCopyNumber.setOnClickListener { onCopyNumber(extractedNumber) }
+            } else {
+                holder.layoutCopyNumber.visibility = View.GONE
             }
         }
 
