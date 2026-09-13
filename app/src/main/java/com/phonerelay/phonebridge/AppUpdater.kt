@@ -21,7 +21,7 @@ import kotlin.concurrent.thread
 
 data class UpdateInfo(
     val versionName: String,
-    val assetApiUrl: String,
+    val downloadUrl: String,
     val notes: String
 )
 
@@ -29,24 +29,14 @@ object AppUpdater {
     private const val GITHUB_REPO = "mdfrhd101/phone-bridge-native"
     private const val RELEASES_API = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
 
-    // Secure token reconstruction to authenticate private releases without exposing any public repo
-    private fun getAuthToken(): String {
-        val part1 = "gho_V588Hlmko"
-        val part2 = "MU1fDmbagbG"
-        val part3 = "ax2KzMf6a33"
-        val part4 = "YphTG"
-        return part1 + part2 + part3 + part4
-    }
-
     fun checkForUpdate(context: Context, silentIfNone: Boolean = false, onFound: ((UpdateInfo) -> Unit)? = null) {
         thread {
             try {
                 val url = URL(RELEASES_API)
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
-                    setRequestProperty("Authorization", "Bearer " + getAuthToken())
                     setRequestProperty("Accept", "application/vnd.github.v3+json")
-                    setRequestProperty("User-Agent", "PB-Android-Updater")
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)")
                     connectTimeout = 8000
                     readTimeout = 8000
                 }
@@ -57,14 +47,14 @@ object AppUpdater {
                     val tag = json.optString("tag_name", "").trimStart('v')
                     val notes = json.optString("body", "Bug fixes and performance improvements.")
 
-                    var assetApiUrl: String? = null
+                    var apkUrl: String? = null
                     val assets = json.optJSONArray("assets")
                     if (assets != null) {
                         for (i in 0 until assets.length()) {
                             val asset = assets.getJSONObject(i)
                             val name = asset.optString("name", "")
                             if (name.endsWith(".apk")) {
-                                assetApiUrl = asset.optString("url")
+                                apkUrl = asset.optString("browser_download_url")
                                 if (name.equals("PB.apk", ignoreCase = true)) {
                                     break
                                 }
@@ -73,10 +63,10 @@ object AppUpdater {
                     }
 
                     val currentVersion = BuildConfig.VERSION_NAME
-                    if (assetApiUrl != null && isNewerVersion(tag, currentVersion)) {
+                    if (apkUrl != null && isNewerVersion(tag, currentVersion)) {
                         val info = UpdateInfo(
                             versionName = tag,
-                            assetApiUrl = assetApiUrl,
+                            downloadUrl = apkUrl,
                             notes = notes
                         )
                         Handler(Looper.getMainLooper()).post {
@@ -89,7 +79,7 @@ object AppUpdater {
                     }
                 } else if (!silentIfNone) {
                     Handler(Looper.getMainLooper()).post {
-                        Toast.makeText(context, "Update check status: ${conn.responseCode}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Update check failed: HTTP ${conn.responseCode}", Toast.LENGTH_SHORT).show()
                     }
                 }
                 conn.disconnect()
@@ -122,15 +112,15 @@ object AppUpdater {
 
         AlertDialog.Builder(activity)
             .setTitle("🚀 New PB Update Available (v${info.versionName})")
-            .setMessage("A new version of PB is ready on your private repository!\n\nWhat's new:\n${info.notes}\n\nDo you want to update now?")
+            .setMessage("A new version of PB is ready!\n\nWhat's new:\n${info.notes}\n\nDo you want to update now?")
             .setPositiveButton("Update Now") { _, _ ->
-                downloadAndInstall(activity, info.assetApiUrl, info.versionName)
+                downloadAndInstall(activity, info.downloadUrl, info.versionName)
             }
             .setNegativeButton("Later", null)
             .show()
     }
 
-    fun downloadAndInstall(activity: Activity, assetApiUrl: String, versionName: String = "") {
+    fun downloadAndInstall(activity: Activity, apkUrl: String, versionName: String = "") {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!activity.packageManager.canRequestPackageInstalls()) {
                 Toast.makeText(activity, "Please allow 'Install unknown apps' permission to install updates", Toast.LENGTH_LONG).show()
@@ -145,7 +135,7 @@ object AppUpdater {
         @Suppress("DEPRECATION")
         val progressDialog = ProgressDialog(activity).apply {
             setTitle("Downloading PB Update")
-            setMessage("Downloading PB ${if (versionName.isNotBlank()) "v$versionName" else ""} securely... Please wait.")
+            setMessage("Downloading PB ${if (versionName.isNotBlank()) "v$versionName" else ""}... Please wait.")
             setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
             isIndeterminate = false
             max = 100
@@ -155,38 +145,36 @@ object AppUpdater {
 
         thread {
             try {
-                // 1. Initial request to private GitHub asset endpoint with Bearer token
-                var conn = (URL(assetApiUrl).openConnection() as HttpURLConnection).apply {
-                    instanceFollowRedirects = false
-                    setRequestProperty("Authorization", "Bearer " + getAuthToken())
-                    setRequestProperty("Accept", "application/octet-stream")
-                    setRequestProperty("User-Agent", "PB-Android-Updater")
-                    connectTimeout = 15000
-                    readTimeout = 20000
-                }
+                var currentUrl = apkUrl
+                var conn: HttpURLConnection
+                var redirects = 0
 
-                val status = conn.responseCode
-                var downloadConn = conn
+                // Follow redirects up to 5 times (GitHub releases redirect to AWS S3/objects.githubusercontent.com)
+                while (true) {
+                    conn = URL(currentUrl).openConnection() as HttpURLConnection
+                    conn.instanceFollowRedirects = true
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)")
+                    conn.connectTimeout = 15000
+                    conn.readTimeout = 20000
 
-                // 2. Follow 302 redirect to storage CDN (clean connection without Bearer token)
-                if (status in 301..308) {
-                    val redirectUrl = conn.getHeaderField("Location")
-                    conn.disconnect()
-                    if (!redirectUrl.isNullOrBlank()) {
-                        downloadConn = (URL(redirectUrl).openConnection() as HttpURLConnection).apply {
-                            instanceFollowRedirects = true
-                            setRequestProperty("User-Agent", "PB-Android-Updater")
-                            connectTimeout = 15000
-                            readTimeout = 20000
+                    val status = conn.responseCode
+                    if (status in 301..308 && redirects < 5) {
+                        val location = conn.getHeaderField("Location")
+                        if (!location.isNullOrBlank()) {
+                            currentUrl = location
+                            conn.disconnect()
+                            redirects++
+                            continue
                         }
                     }
+                    break
                 }
 
-                val totalLength = downloadConn.contentLength
+                val totalLength = conn.contentLength
                 val apkFile = File(activity.cacheDir, "PB-update.apk")
                 if (apkFile.exists()) apkFile.delete()
 
-                val input = downloadConn.inputStream
+                val input = conn.inputStream
                 val output = FileOutputStream(apkFile)
 
                 val buffer = ByteArray(8192)
@@ -209,7 +197,7 @@ object AppUpdater {
                 output.flush()
                 output.close()
                 input.close()
-                downloadConn.disconnect()
+                conn.disconnect()
 
                 Handler(Looper.getMainLooper()).post {
                     try {
