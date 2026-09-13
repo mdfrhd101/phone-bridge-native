@@ -9,11 +9,15 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
+import android.telephony.PhoneStateListener
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
 
 class BridgeForegroundService : Service() {
@@ -28,6 +32,9 @@ class BridgeForegroundService : Service() {
     private var batteryReceiver: BroadcastReceiver? = null
     private var telemetryThread: Thread? = null
     private var shouldRun = true
+    private var telephonyCallback: Any? = null
+    private var phoneStateListener: PhoneStateListener? = null
+    private var lastCallEventTime: Long = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -38,13 +45,137 @@ class BridgeForegroundService : Service() {
         isRunning = true
         BridgePreferences.setServiceRunning(this, true)
 
-        val notification = buildNotification("PhoneBridge Active", "Relaying Calls, SMS & Notifications to Xperia")
-        startForeground(NOTIFICATION_ID, notification)
+        val notification = buildNotification(
+            "PhoneBridge Active 🟢",
+            "Relaying Calls, SMS & Notifications to Xperia"
+        )
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
         registerBatteryReceiver()
+        registerLiveCallMonitor()
         startTelemetrySyncLoop()
 
         return START_STICKY
+    }
+
+    private fun registerLiveCallMonitor() {
+        val tm = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                    private var wasRinging = false
+                    private var ringTime = 0L
+
+                    override fun onCallStateChanged(state: Int) {
+                        if (!BridgePreferences.isForwardCalls(this@BridgeForegroundService)) return
+                        val now = System.currentTimeMillis()
+                        when (state) {
+                            TelephonyManager.CALL_STATE_RINGING -> {
+                                if (now - lastCallEventTime > 3000) {
+                                    lastCallEventTime = now
+                                    wasRinging = true
+                                    ringTime = now
+                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, null)
+                                    FirebaseRelay.sendEvent(
+                                        context = this@BridgeForegroundService,
+                                        eventType = "CALL_RINGING",
+                                        title = "Incoming Call: $displayName",
+                                        body = "Phone is currently ringing at home ($number)",
+                                        sender = displayName,
+                                        extra = "Ringing"
+                                    )
+                                }
+                            }
+                            TelephonyManager.CALL_STATE_OFFHOOK -> {
+                                wasRinging = false
+                            }
+                            TelephonyManager.CALL_STATE_IDLE -> {
+                                if (wasRinging && (now - ringTime > 1000)) {
+                                    val dur = ((now - ringTime) / 1000).coerceAtLeast(1)
+                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, null)
+                                    FirebaseRelay.sendEvent(
+                                        context = this@BridgeForegroundService,
+                                        eventType = "CALL_MISSED",
+                                        title = "Missed Call: $displayName",
+                                        body = "Rang for ${dur}s without being answered.",
+                                        sender = displayName,
+                                        extra = "${dur}s"
+                                    )
+                                }
+                                wasRinging = false
+                            }
+                        }
+                    }
+                }
+                tm.registerTelephonyCallback(mainExecutor, callback)
+                telephonyCallback = callback
+            } else {
+                val listener = object : PhoneStateListener() {
+                    private var wasRinging = false
+                    private var ringTime = 0L
+
+                    @Deprecated("Deprecated in Java")
+                    override fun onCallStateChanged(state: Int, incomingNumber: String?) {
+                        if (!BridgePreferences.isForwardCalls(this@BridgeForegroundService)) return
+                        val now = System.currentTimeMillis()
+                        when (state) {
+                            TelephonyManager.CALL_STATE_RINGING -> {
+                                if (now - lastCallEventTime > 3000) {
+                                    lastCallEventTime = now
+                                    wasRinging = true
+                                    ringTime = now
+                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, incomingNumber)
+                                    FirebaseRelay.sendEvent(
+                                        context = this@BridgeForegroundService,
+                                        eventType = "CALL_RINGING",
+                                        title = "Incoming Call: $displayName",
+                                        body = "Phone is currently ringing at home ($number)",
+                                        sender = displayName,
+                                        extra = "Ringing"
+                                    )
+                                }
+                            }
+                            TelephonyManager.CALL_STATE_OFFHOOK -> {
+                                wasRinging = false
+                            }
+                            TelephonyManager.CALL_STATE_IDLE -> {
+                                if (wasRinging && (now - ringTime > 1000)) {
+                                    val dur = ((now - ringTime) / 1000).coerceAtLeast(1)
+                                    val (number, displayName) = CallReceiver.resolveLatestCaller(this@BridgeForegroundService, incomingNumber)
+                                    FirebaseRelay.sendEvent(
+                                        context = this@BridgeForegroundService,
+                                        eventType = "CALL_MISSED",
+                                        title = "Missed Call: $displayName",
+                                        body = "Rang for ${dur}s without being answered.",
+                                        sender = displayName,
+                                        extra = "${dur}s"
+                                    )
+                                }
+                                wasRinging = false
+                            }
+                        }
+                    }
+                }
+                @Suppress("DEPRECATION")
+                tm.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
+                phoneStateListener = listener
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun registerBatteryReceiver() {
@@ -99,16 +230,13 @@ class BridgeForegroundService : Service() {
                         }
                     }
                 }
-
-                val network = getNetworkType(context)
-                FirebaseRelay.updateTelemetry(context, batteryPct, isCharging, network)
             }
         }
 
         val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_BATTERY_CHANGED)
             addAction(Intent.ACTION_POWER_CONNECTED)
             addAction(Intent.ACTION_POWER_DISCONNECTED)
-            addAction(Intent.ACTION_BATTERY_CHANGED)
         }
         registerReceiver(batteryReceiver, filter)
     }
@@ -125,8 +253,8 @@ class BridgeForegroundService : Service() {
                     val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
                             status == BatteryManager.BATTERY_STATUS_FULL
                     val pct = if (level != -1 && scale != -1) (level * 100 / scale) else -1
-                    val network = getNetworkType(this)
 
+                    val network = getNetworkType(this)
                     FirebaseRelay.updateTelemetry(this, pct, isCharging, network)
                     Thread.sleep(60000)
                 } catch (e: InterruptedException) {
@@ -182,6 +310,8 @@ class BridgeForegroundService : Service() {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
 
@@ -191,6 +321,17 @@ class BridgeForegroundService : Service() {
         BridgePreferences.setServiceRunning(this, false)
         batteryReceiver?.let { unregisterReceiver(it) }
         telemetryThread?.interrupt()
+
+        val tm = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (telephonyCallback as? TelephonyCallback)?.let { tm?.unregisterTelephonyCallback(it) }
+        } else {
+            phoneStateListener?.let {
+                @Suppress("DEPRECATION")
+                tm?.listen(it, PhoneStateListener.LISTEN_NONE)
+            }
+        }
+
         super.onDestroy()
     }
 

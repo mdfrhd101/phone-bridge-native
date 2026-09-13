@@ -42,7 +42,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.1.${{ github.run_number }}"
+          VERSION="v1.2.${{ github.run_number }}"
           echo "Releasing version $VERSION"
           gh release create "$VERSION" release-output/PhoneBridge.apk \
             --title "PhoneBridge $VERSION" \
@@ -51,7 +51,7 @@ jobs:
 
       - name: Broadcast OTA Notification to Phones
         run: |
-          VERSION="v1.1.${{ github.run_number }}"
+          VERSION="v1.2.${{ github.run_number }}"
           curl -s -X POST https://ntfy.sh/pb_vault_farhad_realme_xperia_8829 \
             -H "Title: 🚀 PhoneBridge Update Ready" \
             -H "Priority: high" \

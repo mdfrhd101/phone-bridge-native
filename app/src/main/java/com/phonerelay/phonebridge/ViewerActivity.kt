@@ -1,9 +1,14 @@
 package com.phonerelay.phonebridge
 
+import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -14,7 +19,9 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -37,14 +44,24 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var btnFilterCalls: Button
     private lateinit var btnFilterNotif: Button
 
+    private var allEvents = listOf<NativeEvent>()
     private var currentFilter = "ALL"
-    private var allEvents: List<NativeEvent> = emptyList()
-
     private val handler = Handler(Looper.getMainLooper())
+
+    private val notifPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {}
+
+    private val newEventReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            syncData()
+        }
+    }
+
     private val pollRunnable = object : Runnable {
         override fun run() {
             syncData()
-            handler.postDelayed(this, 3000)
+            handler.postDelayed(this, 5000)
         }
     }
 
@@ -87,6 +104,21 @@ class ViewerActivity : AppCompatActivity() {
         btnFilterCalls.setOnClickListener { setFilter("CALL") }
         btnFilterNotif.setOnClickListener { setFilter("NOTIF") }
 
+        // Request notification permission on Android 13+ so heads-up alerts appear on Xperia
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        // Start background receiver service so Xperia receives calls & OTPs even when app closed
+        val serviceIntent = Intent(this, ViewerForegroundService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+
         syncData()
     }
 
@@ -128,7 +160,7 @@ class ViewerActivity : AppCompatActivity() {
                         tvBattery.setTextColor(getColor(R.color.accent_green))
                     }
 
-                    tvCharging.text = if (telemetry.isCharging) "Charging ⚡" else "Battery"
+                    tvCharging.text = if (telemetry.isCharging) "Charging ⚡" else "On Battery 🔋"
                     tvNetwork.text = telemetry.network
                 }
             }
@@ -150,6 +182,7 @@ class ViewerActivity : AppCompatActivity() {
             "NOTIF" -> allEvents.filter { it.type == "NOTIFICATION" }
             else -> allEvents
         }
+
         rvEvents.adapter = EventAdapter(filtered) { otp ->
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("OTP", otp)
@@ -160,6 +193,11 @@ class ViewerActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(newEventReceiver, IntentFilter(ViewerForegroundService.ACTION_NEW_EVENT), RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(newEventReceiver, IntentFilter(ViewerForegroundService.ACTION_NEW_EVENT))
+        }
         handler.post(pollRunnable)
         AppUpdater.checkForUpdate(this, silentIfNone = true) { info ->
             AppUpdater.promptUpdateDialog(this, info)
@@ -167,6 +205,9 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        try {
+            unregisterReceiver(newEventReceiver)
+        } catch (_: Exception) {}
         handler.removeCallbacks(pollRunnable)
         super.onPause()
     }

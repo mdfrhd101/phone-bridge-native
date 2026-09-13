@@ -1,7 +1,9 @@
 package com.phonerelay.phonebridge
 
 import android.app.Notification
+import android.content.ComponentName
 import android.content.pm.PackageManager
+import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import java.text.SimpleDateFormat
@@ -9,6 +11,19 @@ import java.util.Date
 import java.util.Locale
 
 class AppNotificationListener : NotificationListenerService() {
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                requestRebind(ComponentName(this, AppNotificationListener::class.java))
+            } catch (_: Exception) {}
+        }
+    }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return

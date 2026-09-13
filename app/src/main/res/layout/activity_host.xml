@@ -107,6 +107,7 @@
                 android:textStyle="bold" />
 
             <TextView
+                android:id="@+id/tvSmsStatus"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="✓ SMS &amp; OTP Forwarder (Automatic 4-8 digit OTP)"
@@ -115,6 +116,7 @@
                 android:layout_marginTop="10dp" />
 
             <TextView
+                android:id="@+id/tvCallStatus"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="✓ Call &amp; Missed Call Monitor (Real-time ring alert)"
@@ -132,6 +134,7 @@
                 android:layout_marginTop="6dp" />
 
             <TextView
+                android:id="@+id/tvBatteryOptStatus"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="✓ Battery &amp; Charging Sync (% and plug alerts)"
@@ -140,12 +143,24 @@
                 android:layout_marginTop="6dp" />
         </LinearLayout>
 
-        <!-- Permission Buttons -->
+        <!-- Grant Permissions Button -->
+        <Button
+            android:id="@+id/btnGrantPerms"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grant Call &amp; SMS Permissions"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/bg_dark"
+            android:backgroundTint="@color/primary_blue"
+            android:layout_marginTop="12dp" />
+
+        <!-- Permission Shortcuts -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="12dp">
+            android:layout_marginTop="8dp">
 
             <Button
                 android:id="@+id/btnNotifAccess"
@@ -163,7 +178,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Realme Battery Exemption"
+                android:text="Battery Exemption"
                 android:textSize="11sp"
                 android:textColor="@color/text_white"
                 android:backgroundTint="@color/border_dark"

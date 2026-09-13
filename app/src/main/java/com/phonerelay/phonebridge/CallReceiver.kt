@@ -3,9 +3,12 @@ package com.phonerelay.phonebridge
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.CallLog
 import android.provider.ContactsContract
 import android.telephony.TelephonyManager
+import androidx.core.content.ContextCompat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -17,6 +20,75 @@ class CallReceiver : BroadcastReceiver() {
         private var ringingNumber: String? = null
         private var ringStartTime: Long = 0
         private var wasAnswered = false
+        private var lastRingEventTime: Long = 0
+
+        fun resolveLatestCaller(context: Context, rawNumber: String?): Pair<String, String> {
+            var number = rawNumber
+            var contactName = ""
+
+            // If number is missing (common on Android 10+ without explicit runtime permissions), try CallLog
+            if (number.isNullOrBlank() || number == "Unknown") {
+                try {
+                    if (ContextCompat.checkSelfPermission(
+                            context,
+                            android.Manifest.permission.READ_CALL_LOG
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        val cursor = context.contentResolver.query(
+                            CallLog.Calls.CONTENT_URI,
+                            arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.CACHED_NAME),
+                            null,
+                            null,
+                            "${CallLog.Calls.DATE} DESC"
+                        )
+                        cursor?.use {
+                            if (it.moveToFirst()) {
+                                val num = it.getString(0)
+                                val name = it.getString(1)
+                                if (!num.isNullOrBlank()) number = num
+                                if (!name.isNullOrBlank()) contactName = name
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            // Look up Contacts if name not already found
+            if (contactName.isBlank() && !number.isNullOrBlank() && number != "Unknown") {
+                contactName = getContactName(context, number!!)
+            }
+
+            val finalNumber = if (!number.isNullOrBlank()) number!! else "Incoming Caller"
+            val finalDisplayName = if (contactName.isNotBlank()) "$contactName ($finalNumber)" else finalNumber
+            return Pair(finalNumber, finalDisplayName)
+        }
+
+        fun getContactName(context: Context, phoneNumber: String): String {
+            return try {
+                if (ContextCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.READ_CONTACTS
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    return ""
+                }
+                val uri = Uri.withAppendedPath(
+                    ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                    Uri.encode(phoneNumber)
+                )
+                val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                val cursor = context.contentResolver.query(uri, projection, null, null, null)
+                var name = ""
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        name = it.getString(0) ?: ""
+                    }
+                }
+                name
+            } catch (_: Exception) {
+                ""
+            }
+        }
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -29,14 +101,16 @@ class CallReceiver : BroadcastReceiver() {
 
         when (stateStr) {
             TelephonyManager.EXTRA_STATE_RINGING -> {
+                val now = System.currentTimeMillis()
+                if (now - lastRingEventTime < 3000) return // De-bounce duplicate broadcasts
+                lastRingEventTime = now
+
                 isIncoming = true
                 wasAnswered = false
-                ringStartTime = System.currentTimeMillis()
+                ringStartTime = now
                 ringingNumber = incomingNumber ?: ringingNumber
 
-                val number = ringingNumber ?: "Unknown"
-                val contactName = getContactName(context, number)
-                val displayName = if (contactName.isNotBlank()) "$contactName ($number)" else number
+                val (number, displayName) = resolveLatestCaller(context, ringingNumber)
 
                 FirebaseRelay.sendEvent(
                     context = context,
@@ -61,9 +135,7 @@ class CallReceiver : BroadcastReceiver() {
                             ((System.currentTimeMillis() - ringStartTime) / 1000).coerceAtLeast(1)
                         } else 0
 
-                        val number = ringingNumber ?: "Unknown"
-                        val contactName = getContactName(context, number)
-                        val displayName = if (contactName.isNotBlank()) "$contactName ($number)" else number
+                        val (number, displayName) = resolveLatestCaller(context, ringingNumber)
 
                         FirebaseRelay.sendEvent(
                             context = context,
@@ -81,26 +153,6 @@ class CallReceiver : BroadcastReceiver() {
                     ringStartTime = 0
                 }
             }
-        }
-    }
-
-    private fun getContactName(context: Context, phoneNumber: String): String {
-        return try {
-            val uri = Uri.withAppendedPath(
-                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
-                Uri.encode(phoneNumber)
-            )
-            val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME)
-            val cursor = context.contentResolver.query(uri, projection, null, null, null)
-            var contactName = ""
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    contactName = it.getString(0) ?: ""
-                }
-            }
-            contactName
-        } catch (e: Exception) {
-            ""
         }
     }
 }
