@@ -199,7 +199,8 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:layout_marginTop="8dp"
-        android:paddingHorizontal="4dp">
+        android:paddingHorizontal="4dp"
+        android:visibility="gone">
 
         <CheckBox
             android:id="@+id/cbSelectAll"
@@ -252,10 +253,49 @@
         android:layout_weight="1"
         android:layout_marginTop="12dp">
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rvEvents"
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            android:layout_height="match_parent">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvEvents"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <LinearLayout
+                android:id="@+id/layoutEmptyState"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:padding="32dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="📭"
+                    android:textSize="44sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="No Notifications"
+                    android:textColor="@color/text_white"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:layout_marginTop="8dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="All cleared! New incoming WhatsApp, SMS, and Call alerts will appear here."
+                    android:textColor="@color/text_muted"
+                    android:textSize="12sp"
+                    android:gravity="center"
+                    android:layout_marginTop="4dp" />
+            </LinearLayout>
+        </FrameLayout>
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
 </LinearLayout>

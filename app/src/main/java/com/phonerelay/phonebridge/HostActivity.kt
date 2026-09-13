@@ -99,6 +99,7 @@ class HostActivity : AppCompatActivity() {
             updateStatusText(true)
         }
         BridgeForegroundService.sendInstantTelemetry(this)
+        rebindNotificationListener()
 
         switchService.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
@@ -275,8 +276,20 @@ class HostActivity : AppCompatActivity() {
         rvLogs.adapter = LogAdapter(logs)
     }
 
+    private fun rebindNotificationListener() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                val componentName = android.content.ComponentName(this, AppNotificationListener::class.java)
+                val pm = packageManager
+                pm.setComponentEnabledSetting(componentName, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED, android.content.pm.PackageManager.DONT_KILL_APP)
+                pm.setComponentEnabledSetting(componentName, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP)
+            } catch (_: Exception) {}
+        }
+    }
+
     override fun onResume() {
         super.onResume()
+        rebindNotificationListener()
         BridgeForegroundService.sendInstantTelemetry(this)
         refreshLogsAndStatus()
         handler.post(refreshRunnable)

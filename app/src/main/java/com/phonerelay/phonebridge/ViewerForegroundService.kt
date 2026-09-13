@@ -68,12 +68,7 @@ class ViewerForegroundService : Service() {
         streamThread = Thread {
             while (shouldRun) {
                 try {
-                    val pairCode = BridgePreferences.getPairCode(this)
-                    val topic = if (pairCode.isBlank() || pairCode == "realme-xperia") {
-                        "pb_vault_farhad_realme_xperia_8829"
-                    } else {
-                        "pb_vault_" + pairCode.replace(Regex("[^a-zA-Z0-9_]"), "_")
-                    }
+                    val topic = FirebaseRelay.getPrimaryTopic(this)
 
                     val url = URL("https://ntfy.sh/$topic/json")
                     val conn = (url.openConnection() as HttpURLConnection).apply {

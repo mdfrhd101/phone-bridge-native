@@ -75,6 +75,9 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
+    private lateinit var layoutSelectionBar: View
+    private lateinit var layoutEmptyState: View
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_viewer)
@@ -87,6 +90,9 @@ class ViewerActivity : AppCompatActivity() {
         tvNetwork = findViewById(R.id.tvNetwork)
         swipeRefresh = findViewById(R.id.swipeRefresh)
         rvEvents = findViewById(R.id.rvEvents)
+
+        layoutSelectionBar = findViewById(R.id.layoutSelectionBar)
+        layoutEmptyState = findViewById(R.id.layoutEmptyState)
 
         btnFilterAll = findViewById(R.id.btnFilterAll)
         btnFilterSms = findViewById(R.id.btnFilterSms)
@@ -229,7 +235,11 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun updateList() {
-        eventAdapter.setEvents(getFilteredEvents())
+        val filtered = getFilteredEvents()
+        eventAdapter.setEvents(filtered)
+        val hasEvents = filtered.isNotEmpty()
+        layoutSelectionBar.visibility = if (hasEvents) View.VISIBLE else View.GONE
+        layoutEmptyState.visibility = if (hasEvents) View.GONE else View.VISIBLE
     }
 
     private fun updateSelectionToolbar(count: Int) {
@@ -281,8 +291,8 @@ class ViewerActivity : AppCompatActivity() {
                 if (incoming.isNotEmpty()) {
                     // Smart deduplicated merge with local cache
                     allEvents = EventCache.mergeEvents(this, incoming)
-                    updateList()
                 }
+                updateList()
             }
         }
     }
