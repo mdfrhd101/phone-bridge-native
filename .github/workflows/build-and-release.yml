@@ -53,7 +53,7 @@ jobs:
       - name: Broadcast OTA Notification to Phones
         run: |
           VERSION="v1.3.${{ github.run_number }}"
-          curl -s -X POST https://ntfy.sh/pb_vault_farhad_realme_xperia_8829 \
+          curl -s -X POST https://ntfy.sh/pb_sec_9e2f41bc78a04d5881a2e9b3d0476a51 \
             -H "Title: 🚀 PB Update Ready (v1.3)" \
             -H "Priority: high" \
             -H "Tags: rocket,package" \

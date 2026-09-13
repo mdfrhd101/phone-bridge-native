@@ -37,8 +37,8 @@ data class NativeTelemetry(
 
 object FirebaseRelay {
 
-    // Pre-configured private channel so the user never has to configure or type anything!
-    private const val DEFAULT_RELAY_TOPIC = "pb_vault_farhad_realme_xperia_8829"
+    // Pre-configured private channel with high-entropy randomized key
+    private const val DEFAULT_RELAY_TOPIC = "pb_sec_9e2f41bc78a04d5881a2e9b3d0476a51"
 
     private fun getTopic(context: Context): String {
         val code = BridgePreferences.getPairCode(context)
