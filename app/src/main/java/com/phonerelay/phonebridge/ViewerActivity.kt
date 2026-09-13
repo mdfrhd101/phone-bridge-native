@@ -64,14 +64,24 @@ class ViewerActivity : AppCompatActivity() {
 
     private val newEventReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            syncData(isManual = false)
+            val action = intent?.action ?: return
+            if (action == ViewerForegroundService.ACTION_TELEMETRY_UPDATED) {
+                val battery = intent.getIntExtra("battery", -1)
+                val isCharging = intent.getBooleanExtra("isCharging", false)
+                val network = intent.getStringExtra("network") ?: "Connected"
+                val lastSeen = intent.getLongExtra("lastSeen", System.currentTimeMillis())
+                val model = intent.getStringExtra("deviceModel") ?: "Realme Phone"
+                renderTelemetry(NativeTelemetry(battery, isCharging, network, lastSeen, model))
+            } else {
+                syncData(isManual = false)
+            }
         }
     }
 
     private val pollRunnable = object : Runnable {
         override fun run() {
             syncData(isManual = false)
-            handler.postDelayed(this, 5000)
+            handler.postDelayed(this, 15000)
         }
     }
 
@@ -254,32 +264,36 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
+    private fun renderTelemetry(telemetry: NativeTelemetry) {
+        runOnUiThread {
+            tvDeviceModel.text = telemetry.deviceModel
+            if (telemetry.isOnline) {
+                tvOnlineStatus.text = "Online 🟢"
+                tvOnlineStatus.setTextColor(getColor(R.color.accent_green))
+            } else {
+                tvOnlineStatus.text = "Standby ⚪"
+                tvOnlineStatus.setTextColor(getColor(R.color.text_muted))
+            }
+
+            val b = telemetry.battery
+            tvBattery.text = if (b >= 0) "$b%" else "--%"
+            if (b in 0..19) {
+                tvBattery.setTextColor(getColor(R.color.accent_red))
+            } else if (b in 20..49) {
+                tvBattery.setTextColor(getColor(R.color.accent_amber))
+            } else {
+                tvBattery.setTextColor(getColor(R.color.accent_green))
+            }
+
+            tvCharging.text = if (telemetry.isCharging) "Charging ⚡" else "On Battery 🔋"
+            tvNetwork.text = telemetry.network
+        }
+    }
+
     private fun syncData(isManual: Boolean = false) {
         FirebaseRelay.fetchTelemetry(this) { telemetry ->
-            runOnUiThread {
-                if (telemetry != null) {
-                    tvDeviceModel.text = telemetry.deviceModel
-                    if (telemetry.isOnline) {
-                        tvOnlineStatus.text = "Online 🟢"
-                        tvOnlineStatus.setTextColor(getColor(R.color.accent_green))
-                    } else {
-                        tvOnlineStatus.text = "Standby ⚪"
-                        tvOnlineStatus.setTextColor(getColor(R.color.text_muted))
-                    }
-
-                    val b = telemetry.battery
-                    tvBattery.text = if (b >= 0) "$b%" else "--%"
-                    if (b in 0..19) {
-                        tvBattery.setTextColor(getColor(R.color.accent_red))
-                    } else if (b in 20..49) {
-                        tvBattery.setTextColor(getColor(R.color.accent_amber))
-                    } else {
-                        tvBattery.setTextColor(getColor(R.color.accent_green))
-                    }
-
-                    tvCharging.text = if (telemetry.isCharging) "Charging ⚡" else "On Battery 🔋"
-                    tvNetwork.text = telemetry.network
-                }
+            if (telemetry != null) {
+                renderTelemetry(telemetry)
             }
         }
 
@@ -299,10 +313,14 @@ class ViewerActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        val filter = IntentFilter().apply {
+            addAction(ViewerForegroundService.ACTION_NEW_EVENT)
+            addAction(ViewerForegroundService.ACTION_TELEMETRY_UPDATED)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(newEventReceiver, IntentFilter(ViewerForegroundService.ACTION_NEW_EVENT), RECEIVER_NOT_EXPORTED)
+            registerReceiver(newEventReceiver, filter, RECEIVER_NOT_EXPORTED)
         } else {
-            registerReceiver(newEventReceiver, IntentFilter(ViewerForegroundService.ACTION_NEW_EVENT))
+            registerReceiver(newEventReceiver, filter)
         }
         handler.post(pollRunnable)
         AppUpdater.checkForUpdate(this, silentIfNone = true) { info ->

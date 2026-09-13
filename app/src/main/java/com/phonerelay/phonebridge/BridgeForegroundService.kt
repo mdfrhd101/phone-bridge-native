@@ -96,6 +96,9 @@ class BridgeForegroundService : Service() {
             e.printStackTrace()
         }
 
+        // Start Zero-Latency Local Wi-Fi Server (P2P Engine)
+        LanBridge.startHostLanServices(this)
+
         registerBatteryReceiver()
         registerLiveCallMonitor()
         sendInstantTelemetry(this)
@@ -292,7 +295,7 @@ class BridgeForegroundService : Service() {
 
                     val network = getNetworkType(this)
                     FirebaseRelay.updateTelemetry(this, pct, isCharging, network)
-                    Thread.sleep(60000)
+                    Thread.sleep(15000)
                 } catch (e: InterruptedException) {
                     break
                 } catch (e: Exception) {
@@ -340,6 +343,7 @@ class BridgeForegroundService : Service() {
         isRunning = false
         shouldRun = false
         BridgePreferences.setServiceRunning(this, false)
+        LanBridge.stopHostLanServices()
         batteryReceiver?.let { unregisterReceiver(it) }
         telemetryThread?.interrupt()
 

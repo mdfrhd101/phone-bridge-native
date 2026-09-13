@@ -7,8 +7,8 @@ android {
     namespace = "com.phonerelay.phonebridge"
     compileSdk = 34
 
-    val vCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 10
-    val vName = (project.findProperty("versionName") as? String) ?: "1.3.10"
+    val vCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 11
+    val vName = (project.findProperty("versionName") as? String) ?: "1.3.11"
 
     defaultConfig {
         applicationId = "com.phonerelay.phonebridge"

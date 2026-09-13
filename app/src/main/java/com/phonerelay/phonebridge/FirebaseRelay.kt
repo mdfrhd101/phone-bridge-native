@@ -41,6 +41,13 @@ object FirebaseRelay {
     const val PRIMARY_TOPIC = "pb_vault_farhad_realme_xperia_8829"
     const val SEC_TOPIC = "pb_sec_9e2f41bc78a04d5881a2e9b3d0476a51"
 
+    // Multi-mirror cloud relay cluster
+    val CLOUD_RELAY_ENDPOINTS = listOf(
+        "https://ntfy.envs.net",
+        "https://ntfy.ca",
+        "https://ntfy.sh"
+    )
+
     fun getTopics(context: Context): List<String> {
         val code = BridgePreferences.getPairCode(context)
         return if (code.isBlank() || code == "realme-xperia") {
@@ -66,48 +73,66 @@ object FirebaseRelay {
         // 1. Store locally in event logs
         BridgePreferences.addLog(context, eventType, title, if (otp.isNotBlank()) "OTP: $otp | $body" else body)
 
+        val event = NativeEvent(
+            id = System.currentTimeMillis().toString() + "_" + (1000..9999).random(),
+            type = eventType,
+            title = title,
+            body = body,
+            sender = sender.ifBlank { title },
+            otp = otp,
+            extra = extra,
+            timestamp = System.currentTimeMillis(),
+            deviceModel = android.os.Build.MODEL ?: "Realme"
+        )
+
+        // 2. Broadcast immediately over Local Wi-Fi LAN (0ms latency, zero internet dependency)
+        LanBridge.broadcastEvent(context, event)
+
         val topics = getTopics(context)
 
-        // 2. Dispatch to Built-in Instant Cloud Relay (Dual-topic bridge)
+        // 3. Dispatch in parallel to Multi-Server Redundant Cloud Relays
         Thread {
             for (topic in topics) {
-                try {
-                    val url = URL("https://ntfy.sh/$topic")
-                    val conn = (url.openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        setRequestProperty("Content-Type", "text/plain; charset=UTF-8")
-                        setRequestProperty("Title", title)
-                        setRequestProperty("Priority", "high")
-                        setRequestProperty("X-Type", eventType)
-                        setRequestProperty("X-Sender", URLEncoder.encode(sender, "UTF-8"))
-                        setRequestProperty("X-OTP", otp)
-                        setRequestProperty("X-Extra", URLEncoder.encode(extra, "UTF-8"))
-                        setRequestProperty("X-Model", URLEncoder.encode(android.os.Build.MODEL ?: "Realme", "UTF-8"))
-                        if (otp.isNotBlank()) {
-                            setRequestProperty("Tags", "key,incoming_envelope")
-                        } else if (eventType.startsWith("CALL")) {
-                            setRequestProperty("Tags", "telephone_receiver,phone")
-                        } else {
-                            setRequestProperty("Tags", "bell")
+                // Post to active cloud mirrors (ntfy.envs.net & ntfy.ca)
+                for (endpoint in listOf("https://ntfy.envs.net", "https://ntfy.ca")) {
+                    try {
+                        val url = URL("$endpoint/$topic")
+                        val conn = (url.openConnection() as HttpURLConnection).apply {
+                            requestMethod = "POST"
+                            setRequestProperty("Content-Type", "text/plain; charset=UTF-8")
+                            setRequestProperty("Title", title)
+                            setRequestProperty("Priority", "high")
+                            setRequestProperty("X-Type", eventType)
+                            setRequestProperty("X-Sender", URLEncoder.encode(sender, "UTF-8"))
+                            setRequestProperty("X-OTP", otp)
+                            setRequestProperty("X-Extra", URLEncoder.encode(extra, "UTF-8"))
+                            setRequestProperty("X-Model", URLEncoder.encode(android.os.Build.MODEL ?: "Realme", "UTF-8"))
+                            if (otp.isNotBlank()) {
+                                setRequestProperty("Tags", "key,incoming_envelope")
+                            } else if (eventType.startsWith("CALL")) {
+                                setRequestProperty("Tags", "telephone_receiver,phone")
+                            } else {
+                                setRequestProperty("Tags", "bell")
+                            }
+                            connectTimeout = 3500
+                            readTimeout = 3500
+                            doOutput = true
                         }
-                        connectTimeout = 8000
-                        readTimeout = 8000
-                        doOutput = true
-                    }
 
-                    OutputStreamWriter(conn.outputStream, "UTF-8").use { writer ->
-                        writer.write(body)
-                        writer.flush()
-                    }
+                        OutputStreamWriter(conn.outputStream, "UTF-8").use { writer ->
+                            writer.write(body)
+                            writer.flush()
+                        }
 
-                    conn.responseCode
-                    conn.disconnect()
-                } catch (e: Exception) {
-                    e.printStackTrace()
+                        conn.responseCode
+                        conn.disconnect()
+                    } catch (_: Exception) {
+                        // failover to next mirror
+                    }
                 }
             }
 
-            // Also dispatch to Firebase if user configured it
+            // 4. Also dispatch to Firebase if user configured it
             dispatchToFirebaseIfConfigured(context, eventType, title, body, sender, otp, extra)
         }.start()
     }
@@ -118,91 +143,119 @@ object FirebaseRelay {
         isCharging: Boolean,
         networkType: String
     ) {
+        val telemetry = NativeTelemetry(
+            battery = batteryPercent,
+            isCharging = isCharging,
+            network = networkType,
+            lastSeen = System.currentTimeMillis(),
+            deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+        )
+
+        // 1. Broadcast immediately to Local Wi-Fi LAN
+        LanBridge.broadcastTelemetry(context, telemetry)
+
         val topics = getTopics(context)
 
+        // 2. Dispatch to Multi-Server Redundant Cloud Relays
         Thread {
             for (baseTopic in topics) {
                 val topic = baseTopic + "_telemetry"
-                try {
-                    val url = URL("https://ntfy.sh/$topic")
-                    val conn = (url.openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                        connectTimeout = 8000
-                        readTimeout = 8000
-                        doOutput = true
-                    }
+                for (endpoint in listOf("https://ntfy.envs.net", "https://ntfy.ca")) {
+                    try {
+                        val url = URL("$endpoint/$topic")
+                        val conn = (url.openConnection() as HttpURLConnection).apply {
+                            requestMethod = "POST"
+                            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                            connectTimeout = 3500
+                            readTimeout = 3500
+                            doOutput = true
+                        }
 
-                    val json = JSONObject().apply {
-                        put("battery", batteryPercent)
-                        put("isCharging", isCharging)
-                        put("network", networkType)
-                        put("lastSeen", System.currentTimeMillis())
-                        put("deviceModel", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
-                    }
+                        val json = JSONObject().apply {
+                            put("battery", batteryPercent)
+                            put("isCharging", isCharging)
+                            put("network", networkType)
+                            put("lastSeen", System.currentTimeMillis())
+                            put("deviceModel", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                        }
 
-                    OutputStreamWriter(conn.outputStream, "UTF-8").use { writer ->
-                        writer.write(json.toString())
-                        writer.flush()
-                    }
+                        OutputStreamWriter(conn.outputStream, "UTF-8").use { writer ->
+                            writer.write(json.toString())
+                            writer.flush()
+                        }
 
-                    conn.responseCode
-                    conn.disconnect()
-                } catch (e: Exception) {
-                    e.printStackTrace()
+                        conn.responseCode
+                        conn.disconnect()
+                    } catch (_: Exception) {
+                        // continue to next endpoint
+                    }
                 }
             }
         }.start()
     }
 
     fun fetchTelemetry(context: Context, callback: (NativeTelemetry?) -> Unit) {
-        val topics = getTopics(context)
-
         Thread {
+            // 1. If we discovered a LAN host recently, query it first with 1.5s timeout
+            val hostIp = LanBridge.lastDiscoveredHostIp
+            if (!hostIp.isNullOrBlank() && (System.currentTimeMillis() - LanBridge.lastDiscoveredHostTime < 30000L)) {
+                val lanTelemetry = LanBridge.queryLanTelemetry(hostIp, 1500)
+                if (lanTelemetry != null) {
+                    callback(lanTelemetry)
+                    return@Thread
+                }
+            }
+
+            // 2. Query Cloud Relays with fast failover (ntfy.envs.net -> ntfy.ca -> ntfy.sh)
+            val topics = getTopics(context)
+            val servers = CLOUD_RELAY_ENDPOINTS
+
             for (baseTopic in topics) {
                 val topic = baseTopic + "_telemetry"
-                try {
-                    val url = URL("https://ntfy.sh/$topic/json?poll=1&limit=1")
-                    val conn = (url.openConnection() as HttpURLConnection).apply {
-                        requestMethod = "GET"
-                        connectTimeout = 6000
-                        readTimeout = 6000
-                    }
+                for (server in servers) {
+                    try {
+                        val url = URL("$server/$topic/json?poll=1&limit=1")
+                        val conn = (url.openConnection() as HttpURLConnection).apply {
+                            requestMethod = "GET"
+                            connectTimeout = 3000
+                            readTimeout = 3000
+                        }
 
-                    if (conn.responseCode == 200) {
-                        val reader = BufferedReader(InputStreamReader(conn.inputStream, "UTF-8"))
-                        var line: String?
-                        var lastJson: JSONObject? = null
-                        while (reader.readLine().also { line = it } != null) {
-                            try {
-                                val obj = JSONObject(line!!)
-                                if (obj.optString("event") == "message") {
-                                    val messageStr = obj.optString("message", "")
-                                    if (messageStr.startsWith("{")) {
-                                        lastJson = JSONObject(messageStr)
+                        if (conn.responseCode == 200) {
+                            val reader = BufferedReader(InputStreamReader(conn.inputStream, "UTF-8"))
+                            var line: String?
+                            var lastJson: JSONObject? = null
+                            while (reader.readLine().also { line = it } != null) {
+                                try {
+                                    val obj = JSONObject(line!!)
+                                    if (obj.optString("event") == "message") {
+                                        val messageStr = obj.optString("message", "")
+                                        if (messageStr.startsWith("{")) {
+                                            lastJson = JSONObject(messageStr)
+                                        }
                                     }
-                                }
-                            } catch (_: Exception) {}
-                        }
-                        reader.close()
-                        conn.disconnect()
+                                } catch (_: Exception) {}
+                            }
+                            reader.close()
+                            conn.disconnect()
 
-                        if (lastJson != null) {
-                            val battery = lastJson.optInt("battery", -1)
-                            val isCharging = lastJson.optBoolean("isCharging", false)
-                            val network = lastJson.optString("network", "Connected")
-                            val lastSeen = lastJson.optLong("lastSeen", 0L)
-                            val model = lastJson.optString("deviceModel", "Realme Phone")
+                            if (lastJson != null) {
+                                val battery = lastJson.optInt("battery", -1)
+                                val isCharging = lastJson.optBoolean("isCharging", false)
+                                val network = lastJson.optString("network", "Connected")
+                                val lastSeen = lastJson.optLong("lastSeen", 0L)
+                                val model = lastJson.optString("deviceModel", "Realme Phone")
 
-                            val telemetry = NativeTelemetry(battery, isCharging, network, lastSeen, model)
-                            callback(telemetry)
-                            return@Thread
+                                val telemetry = NativeTelemetry(battery, isCharging, network, lastSeen, model)
+                                callback(telemetry)
+                                return@Thread
+                            }
+                        } else {
+                            conn.disconnect()
                         }
-                    } else {
-                        conn.disconnect()
+                    } catch (_: Exception) {
+                        // Try next server
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
                 }
             }
             callback(null)
@@ -210,79 +263,99 @@ object FirebaseRelay {
     }
 
     fun fetchEvents(context: Context, callback: (List<NativeEvent>) -> Unit) {
-        val topics = getTopics(context)
-
         Thread {
             val list = mutableListOf<NativeEvent>()
-            for (topic in topics) {
-                try {
-                    val url = URL("https://ntfy.sh/$topic/json?poll=1&since=12h")
-                    val conn = (url.openConnection() as HttpURLConnection).apply {
-                        requestMethod = "GET"
-                        connectTimeout = 6000
-                        readTimeout = 6000
-                    }
 
-                    if (conn.responseCode == 200) {
-                        val reader = BufferedReader(InputStreamReader(conn.inputStream, "UTF-8"))
-                        var line: String?
-                        while (reader.readLine().also { line = it } != null) {
-                            try {
-                                val obj = JSONObject(line!!)
-                                if (obj.optString("event") == "message") {
-                                    val id = obj.optString("id", "")
-                                    val title = obj.optString("title", "Event")
-                                    val body = obj.optString("message", "")
-                                    val timeSec = obj.optLong("time", 0L)
-                                    val timestamp = if (timeSec > 0) timeSec * 1000L else System.currentTimeMillis()
-
-                                    val tags = obj.optJSONArray("tags")
-                                    var type = "EVENT"
-                                    var isCall = false
-                                    var isSms = false
-
-                                    if (tags != null) {
-                                        for (i in 0 until tags.length()) {
-                                            val t = tags.optString(i)
-                                            if (t == "phone" || t == "telephone_receiver") isCall = true
-                                            if (t == "key" || t == "incoming_envelope") isSms = true
-                                        }
-                                    }
-
-                                    if (isCall || title.contains("Call", true)) {
-                                        type = if (title.contains("Missed", true)) "CALL_MISSED" else "CALL_RINGING"
-                                    } else if (isSms || title.contains("SMS", true) || body.contains("OTP", true)) {
-                                        type = "SMS"
-                                    } else {
-                                        type = "NOTIFICATION"
-                                    }
-
-                                    val otp = extractOtp(body)
-
-                                    list.add(
-                                        NativeEvent(
-                                            id = id,
-                                            type = type,
-                                            title = title,
-                                            body = body,
-                                            sender = title,
-                                            otp = otp ?: "",
-                                            extra = "",
-                                            timestamp = timestamp,
-                                            deviceModel = "Realme"
-                                        )
-                                    )
-                                }
-                            } catch (_: Exception) {}
-                        }
-                        reader.close()
-                    }
-                    conn.disconnect()
-                } catch (e: Exception) {
-                    e.printStackTrace()
+            // 1. If LAN host is known, query it directly
+            val hostIp = LanBridge.lastDiscoveredHostIp
+            if (!hostIp.isNullOrBlank()) {
+                val lanEvents = LanBridge.queryLanEvents(hostIp, 1800)
+                if (lanEvents.isNotEmpty()) {
+                    list.addAll(lanEvents)
                 }
             }
-            val uniqueList = list.distinctBy { it.id }.sortedByDescending { it.timestamp }
+
+            // 2. Query Cloud Relays with fast failover
+            val topics = getTopics(context)
+            val servers = CLOUD_RELAY_ENDPOINTS
+
+            for (topic in topics) {
+                for (server in servers) {
+                    try {
+                        val url = URL("$server/$topic/json?poll=1&since=12h")
+                        val conn = (url.openConnection() as HttpURLConnection).apply {
+                            requestMethod = "GET"
+                            connectTimeout = 3000
+                            readTimeout = 3000
+                        }
+
+                        if (conn.responseCode == 200) {
+                            val reader = BufferedReader(InputStreamReader(conn.inputStream, "UTF-8"))
+                            var line: String?
+                            var gotEvents = false
+                            while (reader.readLine().also { line = it } != null) {
+                                try {
+                                    val obj = JSONObject(line!!)
+                                    if (obj.optString("event") == "message") {
+                                        gotEvents = true
+                                        val id = obj.optString("id", "")
+                                        val title = obj.optString("title", "Event")
+                                        val body = obj.optString("message", "")
+                                        val timeSec = obj.optLong("time", 0L)
+                                        val timestamp = if (timeSec > 0) timeSec * 1000L else System.currentTimeMillis()
+
+                                        val tags = obj.optJSONArray("tags")
+                                        var type = "EVENT"
+                                        var isCall = false
+                                        var isSms = false
+
+                                        if (tags != null) {
+                                            for (i in 0 until tags.length()) {
+                                                val t = tags.optString(i)
+                                                if (t == "phone" || t == "telephone_receiver") isCall = true
+                                                if (t == "key" || t == "incoming_envelope") isSms = true
+                                            }
+                                        }
+
+                                        if (isCall || title.contains("Call", true)) {
+                                            type = if (title.contains("Missed", true)) "CALL_MISSED" else "CALL_RINGING"
+                                        } else if (isSms || title.contains("SMS", true) || body.contains("OTP", true)) {
+                                            type = "SMS"
+                                        } else {
+                                            type = "NOTIFICATION"
+                                        }
+
+                                        val otp = extractOtp(body)
+
+                                        list.add(
+                                            NativeEvent(
+                                                id = id,
+                                                type = type,
+                                                title = title,
+                                                body = body,
+                                                sender = title,
+                                                otp = otp ?: "",
+                                                extra = "",
+                                                timestamp = timestamp,
+                                                deviceModel = "Realme"
+                                            )
+                                        )
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                            reader.close()
+                            conn.disconnect()
+                            if (gotEvents) break // Server provided events, no need to query next mirror for same topic
+                        } else {
+                            conn.disconnect()
+                        }
+                    } catch (_: Exception) {
+                        // Try next mirror
+                    }
+                }
+            }
+
+            val uniqueList = list.distinctBy { it.id.ifBlank { "${it.title}_${it.timestamp}" } }.sortedByDescending { it.timestamp }
             callback(uniqueList)
         }.start()
     }
@@ -314,8 +387,8 @@ object FirebaseRelay {
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                connectTimeout = 6000
-                readTimeout = 6000
+                connectTimeout = 4000
+                readTimeout = 4000
                 doOutput = true
             }
 

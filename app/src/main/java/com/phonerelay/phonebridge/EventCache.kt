@@ -67,6 +67,10 @@ object EventCache {
         }
     }
 
+    fun saveEvent(context: Context, event: NativeEvent) {
+        mergeEvents(context, listOf(event))
+    }
+
     private fun getDeletedIds(context: Context): MutableSet<String> {
         val file = File(context.filesDir, DELETED_FILE)
         if (!file.exists()) return mutableSetOf()

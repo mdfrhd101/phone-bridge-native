@@ -31,6 +31,7 @@ class ViewerForegroundService : Service() {
         fun isServiceRunning(): Boolean = isRunning
 
         const val ACTION_NEW_EVENT = "com.phonerelay.phonebridge.NEW_EVENT"
+        const val ACTION_TELEMETRY_UPDATED = "com.phonerelay.phonebridge.TELEMETRY_UPDATED"
     }
 
     private var streamThread: Thread? = null
@@ -59,6 +60,29 @@ class ViewerForegroundService : Service() {
             e.printStackTrace()
         }
 
+        // 1. Start Zero-Latency Local Wi-Fi Receiver (P2P Engine)
+        LanBridge.startViewerLanReceiver(
+            context = this,
+            onTelemetry = { telemetry ->
+                val broadIntent = Intent(ACTION_TELEMETRY_UPDATED).apply {
+                    putExtra("battery", telemetry.battery)
+                    putExtra("isCharging", telemetry.isCharging)
+                    putExtra("network", telemetry.network)
+                    putExtra("lastSeen", telemetry.lastSeen)
+                    putExtra("deviceModel", telemetry.deviceModel)
+                }
+                sendBroadcast(broadIntent)
+            },
+            onEvent = { event ->
+                EventCache.saveEvent(this, event)
+                val isCall = event.type.startsWith("CALL")
+                val isSms = event.type == "SMS"
+                postHeadsUpNotification(event.title, event.body, isCall, isSms, event.otp.takeIf { it.isNotBlank() })
+                sendBroadcast(Intent(ACTION_NEW_EVENT))
+            }
+        )
+
+        // 2. Start Multi-Mirror Redundant Cloud Stream (Active Failover)
         startEventStream()
         return START_STICKY
     }
@@ -66,14 +90,19 @@ class ViewerForegroundService : Service() {
     private fun startEventStream() {
         shouldRun = true
         streamThread = Thread {
+            val servers = listOf("https://ntfy.envs.net", "https://ntfy.ca", "https://ntfy.sh")
+            var serverIndex = 0
+
             while (shouldRun) {
+                val server = servers[serverIndex % servers.size]
+                serverIndex++
+
                 try {
                     val topic = FirebaseRelay.getPrimaryTopic(this)
-
-                    val url = URL("https://ntfy.sh/$topic/json")
+                    val url = URL("$server/$topic/json")
                     val conn = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
-                        connectTimeout = 15000
+                        connectTimeout = 8000
                         readTimeout = 0 // Infinite stream
                     }
 
@@ -96,7 +125,7 @@ class ViewerForegroundService : Service() {
                     break
                 } catch (e: Exception) {
                     try {
-                        Thread.sleep(3000)
+                        Thread.sleep(2500)
                     } catch (_: InterruptedException) {
                         break
                     }
@@ -109,7 +138,25 @@ class ViewerForegroundService : Service() {
         val title = json.optString("title", "PhoneBridge Alert")
         val message = json.optString("message", "")
         if (message.startsWith("{") && message.contains("battery")) {
-            // Telemetry ping, skip notification
+            // Telemetry ping over cloud topic
+            try {
+                val tJson = JSONObject(message)
+                val telemetry = NativeTelemetry(
+                    battery = tJson.optInt("battery", -1),
+                    isCharging = tJson.optBoolean("isCharging", false),
+                    network = "${tJson.optString("network", "Connected")} (Cloud ☁️)",
+                    lastSeen = tJson.optLong("lastSeen", System.currentTimeMillis()),
+                    deviceModel = tJson.optString("deviceModel", "Realme Phone")
+                )
+                val intent = Intent(ACTION_TELEMETRY_UPDATED).apply {
+                    putExtra("battery", telemetry.battery)
+                    putExtra("isCharging", telemetry.isCharging)
+                    putExtra("network", telemetry.network)
+                    putExtra("lastSeen", telemetry.lastSeen)
+                    putExtra("deviceModel", telemetry.deviceModel)
+                }
+                sendBroadcast(intent)
+            } catch (_: Exception) {}
             return
         }
 
@@ -129,6 +176,20 @@ class ViewerForegroundService : Service() {
 
         val otp = extractOtp(message)
         postHeadsUpNotification(title, message, isCall, isSms, otp)
+
+        // Save event locally
+        val event = NativeEvent(
+            id = json.optString("id", System.currentTimeMillis().toString()),
+            type = if (isCall) "CALL" else if (isSms) "SMS" else "NOTIFICATION",
+            title = title,
+            body = message,
+            sender = title,
+            otp = otp ?: "",
+            extra = "",
+            timestamp = System.currentTimeMillis(),
+            deviceModel = "Realme"
+        )
+        EventCache.saveEvent(this, event)
 
         // Notify ViewerActivity if visible
         val intent = Intent(ACTION_NEW_EVENT)
@@ -251,7 +312,7 @@ class ViewerForegroundService : Service() {
 
         return NotificationCompat.Builder(this, ONGOING_CHANNEL_ID)
             .setContentTitle("Xperia Bridge Active 🟢")
-            .setContentText("Listening for Realme Calls, OTPs & SMS in background")
+            .setContentText("Listening for Realme Calls, OTPs & SMS via Wi-Fi & Cloud")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -263,6 +324,7 @@ class ViewerForegroundService : Service() {
     override fun onDestroy() {
         isRunning = false
         shouldRun = false
+        LanBridge.stopViewerLanReceiver()
         streamThread?.interrupt()
         super.onDestroy()
     }

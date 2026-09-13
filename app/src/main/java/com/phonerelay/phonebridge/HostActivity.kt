@@ -146,7 +146,7 @@ class HostActivity : AppCompatActivity() {
                 otp = "482910",
                 extra = "Test Mode"
             )
-            Toast.makeText(this, "Test SMS sent to Firebase! Check Xperia.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Test SMS sent via Wi-Fi & Cloud! Check Xperia.", Toast.LENGTH_SHORT).show()
             refreshLogsAndStatus()
         }
 
@@ -159,7 +159,7 @@ class HostActivity : AppCompatActivity() {
                 sender = "Baba",
                 extra = "Ringing"
             )
-            Toast.makeText(this, "Test Call sent to Firebase! Check Xperia.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Test Call sent via Wi-Fi & Cloud! Check Xperia.", Toast.LENGTH_SHORT).show()
             refreshLogsAndStatus()
         }
 
@@ -172,7 +172,7 @@ class HostActivity : AppCompatActivity() {
                 sender = "bKash",
                 extra = "bKash Alert"
             )
-            Toast.makeText(this, "Test Notification sent to Firebase! Check Xperia.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Test Notification sent via Wi-Fi & Cloud! Check Xperia.", Toast.LENGTH_SHORT).show()
             refreshLogsAndStatus()
         }
 

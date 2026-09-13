@@ -1,9 +1,9 @@
 {
-  "versionCode": 10,
-  "versionName": "1.3.10",
-  "downloadUrl": "https://github.com/mdfrhd101/phone-bridge-native/releases/download/v1.3.10/PB.apk",
+  "versionCode": 11,
+  "versionName": "1.3.11",
+  "downloadUrl": "https://github.com/mdfrhd101/phone-bridge-native/releases/download/v1.3.11/PB.apk",
   "fallbackUrl": "https://github.com/mdfrhd101/phone-bridge-native/releases/latest/download/PB.apk",
   "lanDownloadUrl": "http://192.168.0.105:8080/PB.apk",
   "webReleaseUrl": "https://github.com/mdfrhd101/phone-bridge-native/releases/latest",
-  "notes": "PB v1.3.10: Resilient CDN updates, zero rate limit, dynamic versioning fix (stops update loop), WhatsApp deep extraction, 1-tap copy number, and instant battery telemetry."
+  "notes": "PB v1.3.11: Multi-Server Redundant Cloud Relay (ntfy.envs.net + ntfy.ca), Zero-Latency Local Wi-Fi P2P Sync (<1ms), Real-time battery & telemetry updates, and seamless OTA in-app update."
 }

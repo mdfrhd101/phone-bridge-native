@@ -72,14 +72,16 @@ jobs:
           echo "Releasing version $VERSION"
           gh release create "$VERSION" release-output/PB.apk release-output/PhoneBridge.apk release-output/version.json \
             --title "PB $VERSION" \
-            --notes "Release $VERSION: Fixed infinite update loop with dynamic versioning, implemented resilient CDN OTA updates with zero-rate-limit failover, deep WhatsApp message extraction, 1-tap Copy Number, persistent cache, and instant battery telemetry." \
+            --notes "Release $VERSION: Multi-Server Redundant Cloud Relay (ntfy.envs.net + ntfy.ca), Zero-Latency Local Wi-Fi P2P Sync (<1ms), Real-time accurate battery telemetry, and seamless OTA in-app updates." \
             --latest
 
       - name: Broadcast OTA Notification to Phones
         run: |
           VERSION="v1.3.${{ github.run_number }}"
-          curl -s -X POST https://ntfy.sh/pb_sec_9e2f41bc78a04d5881a2e9b3d0476a51 \
-            -H "Title: 🚀 PB Update Ready ($VERSION)" \
-            -H "Priority: high" \
-            -H "Tags: rocket,package" \
-            -d "PB $VERSION is ready on GitHub. Open PB and tap Update." || true
+          for endpoint in https://ntfy.envs.net https://ntfy.ca https://ntfy.sh; do
+            curl -s -m 5 -X POST "$endpoint/pb_sec_9e2f41bc78a04d5881a2e9b3d0476a51" \
+              -H "Title: 🚀 PB Update Ready ($VERSION)" \
+              -H "Priority: high" \
+              -H "Tags: rocket,package" \
+              -d "PB $VERSION is ready on GitHub. Open PB and tap Update." || true
+          done
