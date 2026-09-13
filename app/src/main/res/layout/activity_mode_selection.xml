@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_dark"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="PhoneBridge Lite"
+            android:textColor="@color/text_white"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="20dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚡ Zero Setup • Realme ⇄ Sony Xperia"
+            android:textColor="@color/primary_blue"
+            android:textSize="13.5sp"
+            android:textStyle="bold"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="4dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="কোনো অ্যাকাউন্ট বা পাসওয়ার্ড ছাড়া সরাসরি কানেক্ট হবে।"
+            android:textColor="@color/text_muted"
+            android:textSize="12.5sp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="2dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="এই ফোনটিতে কী মোড চালু করবেন?"
+            android:textColor="@color/text_white"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:layout_marginTop="32dp" />
+
+        <!-- Option 1: Realme Host -->
+        <LinearLayout
+            android:id="@+id/cardHost"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:layout_marginTop="14dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <RadioButton
+                    android:id="@+id/rbHost"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:buttonTint="@color/accent_green" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="🏠 Realme Phone (Sender)"
+                    android:textColor="@color/text_white"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_pill_green"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="3dp"
+                    android:text="Home Host"
+                    android:textColor="@color/accent_green"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="বাসায় থাকবে। SMS, ব্যাংকিং OTP, ইনকামিং কল ও অ্যাপ নোটিফিকেশন ক্লাউডে পাঠাবে।"
+                android:textColor="@color/text_muted"
+                android:textSize="12.5sp"
+                android:layout_marginStart="36dp"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Option 2: Xperia Viewer -->
+        <LinearLayout
+            android:id="@+id/cardViewer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:layout_marginTop="14dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <RadioButton
+                    android:id="@+id/rbViewer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="false"
+                    android:buttonTint="@color/primary_blue" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="📱 Sony Xperia (Receiver)"
+                    android:textColor="@color/text_white"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_pill_blue"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="3dp"
+                    android:text="Pocket Viewer"
+                    android:textColor="@color/primary_blue"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="আপনার সাথে থাকবে। রিয়েলমে ফোনের লাইভ চার্জ %, কল অ্যালার্ট ও OTP দেখাবে।"
+                android:textColor="@color/text_muted"
+                android:textSize="12.5sp"
+                android:layout_marginStart="36dp"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Zero-Setup Badge Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="horizontal"
+            android:padding="14dp"
+            android:gravity="center_vertical"
+            android:layout_marginTop="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🔒"
+                android:textSize="20sp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:layout_marginStart="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Pre-configured Private Channel"
+                    android:textColor="@color/text_white"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="উভয় ফোন স্বয়ংক্রিয়ভাবে একটি সুরক্ষিত ক্লাউড চ্যানেলে যুক্ত হবে।"
+                    android:textColor="@color/text_muted"
+                    android:textSize="11.5sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnContinue"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="28dp"
+            android:backgroundTint="@color/accent_green"
+            android:text="Start as Realme Host"
+            android:textAllCaps="false"
+            android:textColor="@color/text_white"
+            android:textSize="15.5sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+</ScrollView>

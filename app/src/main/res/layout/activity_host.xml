@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_dark"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <!-- Top Bar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Realme Host • Home Hub"
+                android:textColor="@color/text_white"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnCheckUpdate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Update"
+                android:textSize="11sp"
+                android:textColor="@color/accent_green"
+                style="@style/Widget.MaterialComponents.Button.TextButton" />
+
+            <Button
+                android:id="@+id/btnSwitchRole"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Switch Role"
+                android:textSize="11sp"
+                android:textColor="@color/primary_blue"
+                style="@style/Widget.MaterialComponents.Button.TextButton" />
+        </LinearLayout>
+
+        <!-- Status Card -->
+        <LinearLayout
+            android:id="@+id/cardServiceStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:gravity="center_vertical"
+            android:layout_marginTop="16dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvStatusTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="RELAY SERVICE RUNNING"
+                    android:textColor="@color/accent_green"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvPairCode"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Pair Code: realme-xperia"
+                    android:textColor="@color/text_muted"
+                    android:textSize="12sp"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switchService"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true" />
+        </LinearLayout>
+
+        <!-- Active Relay Modules Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:layout_marginTop="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Active Relay Modules"
+                android:textColor="@color/text_white"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="✓ SMS &amp; OTP Forwarder (Automatic 4-8 digit OTP)"
+                android:textColor="@color/text_muted"
+                android:textSize="12.5sp"
+                android:layout_marginTop="10dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="✓ Call &amp; Missed Call Monitor (Real-time ring alert)"
+                android:textColor="@color/text_muted"
+                android:textSize="12.5sp"
+                android:layout_marginTop="6dp" />
+
+            <TextView
+                android:id="@+id/tvNotifAccessStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="✓ All App Notifications (Gmail, bKash, WhatsApp)"
+                android:textColor="@color/text_muted"
+                android:textSize="12.5sp"
+                android:layout_marginTop="6dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="✓ Battery &amp; Charging Sync (% and plug alerts)"
+                android:textColor="@color/text_muted"
+                android:textSize="12.5sp"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
+        <!-- Permission Buttons -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="12dp">
+
+            <Button
+                android:id="@+id/btnNotifAccess"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Notification Access"
+                android:textSize="11sp"
+                android:textColor="@color/text_white"
+                android:backgroundTint="@color/border_dark"
+                android:layout_marginEnd="6dp" />
+
+            <Button
+                android:id="@+id/btnBatteryOpt"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Realme Battery Exemption"
+                android:textSize="11sp"
+                android:textColor="@color/text_white"
+                android:backgroundTint="@color/border_dark"
+                android:layout_marginStart="6dp" />
+        </LinearLayout>
+
+        <!-- Test Buttons -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Instant Testing (রিয়েলমে থেকে টেস্ট পাঠান):"
+            android:textColor="@color/text_white"
+            android:textSize="13.5sp"
+            android:textStyle="bold"
+            android:layout_marginTop="20dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp">
+
+            <Button
+                android:id="@+id/btnTestSms"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Test SMS"
+                android:textSize="11.5sp"
+                android:backgroundTint="@color/primary_blue"
+                android:textColor="@color/bg_dark"
+                android:layout_marginEnd="4dp" />
+
+            <Button
+                android:id="@+id/btnTestCall"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Test Call"
+                android:textSize="11.5sp"
+                android:backgroundTint="@color/accent_green"
+                android:textColor="@color/bg_dark"
+                android:layout_marginHorizontal="4dp" />
+
+            <Button
+                android:id="@+id/btnTestNotif"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Test Notif"
+                android:textSize="11.5sp"
+                android:backgroundTint="@color/accent_amber"
+                android:textColor="@color/bg_dark"
+                android:layout_marginStart="4dp" />
+        </LinearLayout>
+
+        <!-- Activity Log List -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Recent Relayed Activity (লগ)"
+            android:textColor="@color/text_white"
+            android:textSize="13.5sp"
+            android:textStyle="bold"
+            android:layout_marginTop="20dp" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvLogs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:nestedScrollingEnabled="false" />
+
+    </LinearLayout>
+</ScrollView>

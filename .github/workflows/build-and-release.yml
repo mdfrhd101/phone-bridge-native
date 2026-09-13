@@ -1,0 +1,59 @@
+name: Build & Release PhoneBridge APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Make Gradlew Executable
+        run: chmod +x gradlew
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Rename & Prepare APK
+        run: |
+          mkdir -p release-output
+          cp app/build/outputs/apk/release/app-release.apk release-output/PhoneBridge.apk
+          echo "APK Size: $(ls -lh release-output/PhoneBridge.apk | awk '{print $5}')"
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v1.1.${{ github.run_number }}"
+          echo "Releasing version $VERSION"
+          gh release create "$VERSION" release-output/PhoneBridge.apk \
+            --title "PhoneBridge $VERSION" \
+            --notes "Automated build for commit ${{ github.sha }}. Includes native zero-friction update support." \
+            --latest
+
+      - name: Broadcast OTA Notification to Phones
+        run: |
+          VERSION="v1.1.${{ github.run_number }}"
+          curl -s -X POST https://ntfy.sh/pb_vault_farhad_realme_xperia_8829 \
+            -H "Title: 🚀 PhoneBridge Update Ready" \
+            -H "Priority: high" \
+            -H "Tags: rocket,package" \
+            -d "New version $VERSION is ready on GitHub. Open PhoneBridge and tap Update." || true
