@@ -18,6 +18,8 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Collections
+import java.util.LinkedHashMap
 
 class ViewerForegroundService : Service() {
 
@@ -36,6 +38,28 @@ class ViewerForegroundService : Service() {
 
     private var streamThread: Thread? = null
     private var shouldRun = true
+
+    // LRU Sliding window to suppress duplicate heads-up alerts within 45 seconds
+    private val recentAlertFingerprints = Collections.synchronizedMap(
+        object : LinkedHashMap<String, Long>(60, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
+                return size > 150
+            }
+        }
+    )
+
+    @Synchronized
+    private fun isRecentDuplicate(type: String, title: String, body: String): Boolean {
+        val now = System.currentTimeMillis()
+        val key = "${type.trim()}|${title.trim()}|${body.trim()}".lowercase()
+        val lastSeen = recentAlertFingerprints[key]
+        if (lastSeen != null && (now - lastSeen) < 45000L) {
+            // Already alerted within last 45 seconds! Suppress duplicate.
+            return true
+        }
+        recentAlertFingerprints[key] = now
+        return false
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -74,10 +98,13 @@ class ViewerForegroundService : Service() {
                 sendBroadcast(broadIntent)
             },
             onEvent = { event ->
+                val isDup = isRecentDuplicate(event.type, event.title, event.body)
                 EventCache.saveEvent(this, event)
-                val isCall = event.type.startsWith("CALL")
-                val isSms = event.type == "SMS"
-                postHeadsUpNotification(event.title, event.body, isCall, isSms, event.otp.takeIf { it.isNotBlank() })
+                if (!isDup) {
+                    val isCall = event.type.startsWith("CALL")
+                    val isSms = event.type == "SMS"
+                    postHeadsUpNotification(event.title, event.body, isCall, isSms, event.otp.takeIf { it.isNotBlank() })
+                }
                 sendBroadcast(Intent(ACTION_NEW_EVENT))
             }
         )
@@ -175,12 +202,20 @@ class ViewerForegroundService : Service() {
         if (title.contains("SMS", true) || message.contains("OTP", true)) isSms = true
 
         val otp = extractOtp(message)
-        postHeadsUpNotification(title, message, isCall, isSms, otp)
+        val eventType = if (isCall) {
+            if (title.contains("Missed", true)) "CALL_MISSED" else "CALL_RINGING"
+        } else if (isSms) {
+            "SMS"
+        } else {
+            "NOTIFICATION"
+        }
 
-        // Save event locally
+        val isDup = isRecentDuplicate(eventType, title, message)
+
+        // Save event locally (EventCache will also deduplicate against existing list)
         val event = NativeEvent(
-            id = json.optString("id", System.currentTimeMillis().toString()),
-            type = if (isCall) "CALL" else if (isSms) "SMS" else "NOTIFICATION",
+            id = json.optString("id", ""),
+            type = eventType,
             title = title,
             body = message,
             sender = title,
@@ -191,9 +226,13 @@ class ViewerForegroundService : Service() {
         )
         EventCache.saveEvent(this, event)
 
+        // Only alert if this is the FIRST time we receive this event (not duplicate from another mirror)
+        if (!isDup) {
+            postHeadsUpNotification(title, message, isCall, isSms, otp)
+        }
+
         // Notify ViewerActivity if visible
-        val intent = Intent(ACTION_NEW_EVENT)
-        sendBroadcast(intent)
+        sendBroadcast(Intent(ACTION_NEW_EVENT))
     }
 
     private fun postHeadsUpNotification(
@@ -204,7 +243,10 @@ class ViewerForegroundService : Service() {
         otp: String?
     ) {
         val manager = getSystemService(NotificationManager::class.java) ?: return
-        val notifId = (System.currentTimeMillis() % 100000).toInt() + 100
+        val channelId = if (isCall) CALLS_CHANNEL_ID else ALERTS_CHANNEL_ID
+
+        // Deterministic notification ID based on channel + title + body so Android collapses any duplicate
+        val notifId = Math.abs("${channelId}_${title.trim()}_${body.trim()}".hashCode() % 90000) + 1000
 
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
         val pendingContent = PendingIntent.getActivity(
@@ -213,8 +255,6 @@ class ViewerForegroundService : Service() {
             launchIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-
-        val channelId = if (isCall) CALLS_CHANNEL_ID else ALERTS_CHANNEL_ID
 
         val builder = NotificationCompat.Builder(this, channelId)
             .setContentTitle(title)

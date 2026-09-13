@@ -17,10 +17,10 @@ object EventCache {
             return try {
                 val jsonStr = file.readText(Charsets.UTF_8)
                 val jsonArr = JSONArray(jsonStr)
-                val list = mutableListOf<NativeEvent>()
+                val rawList = mutableListOf<NativeEvent>()
                 for (i in 0 until jsonArr.length()) {
                     val obj = jsonArr.getJSONObject(i)
-                    list.add(
+                    rawList.add(
                         NativeEvent(
                             id = obj.optString("id", ""),
                             type = obj.optString("type", "EVENT"),
@@ -34,7 +34,14 @@ object EventCache {
                         )
                     )
                 }
-                list.sortedByDescending { it.timestamp }
+                // Deduplicate any legacy or duplicate events on load
+                val uniqueList = mutableListOf<NativeEvent>()
+                for (ev in rawList.sortedByDescending { it.timestamp }) {
+                    if (!isDuplicate(ev, uniqueList)) {
+                        uniqueList.add(ev)
+                    }
+                }
+                uniqueList
             } catch (e: Exception) {
                 emptyList()
             }
@@ -45,7 +52,7 @@ object EventCache {
         synchronized(lock) {
             try {
                 val jsonArr = JSONArray()
-                // Limit persistent cache to latest 300 events to maintain lightning performance
+                // Limit persistent cache to latest 300 events
                 val limited = events.take(300)
                 for (ev in limited) {
                     val obj = JSONObject().apply {
@@ -95,29 +102,43 @@ object EventCache {
         } catch (_: Exception) {}
     }
 
+    private fun isDuplicate(incoming: NativeEvent, existing: List<NativeEvent>): Boolean {
+        val inType = incoming.type
+        val inTitle = incoming.title.trim()
+        val inBody = incoming.body.trim()
+        for (ev in existing) {
+            if (ev.id.isNotBlank() && incoming.id.isNotBlank() && ev.id == incoming.id) {
+                return true
+            }
+            if (ev.type == inType &&
+                ev.title.trim().equals(inTitle, ignoreCase = true) &&
+                ev.body.trim().equals(inBody, ignoreCase = true)) {
+                // If content is identical and within 90 seconds, treat as duplicate
+                if (Math.abs(ev.timestamp - incoming.timestamp) < 90000L) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     fun mergeEvents(context: Context, incoming: List<NativeEvent>): List<NativeEvent> {
         synchronized(lock) {
             val current = loadEvents(context).toMutableList()
             val deletedIds = getDeletedIds(context)
 
-            val existingKeys = HashSet<String>()
-            for (ev in current) {
-                val key = if (ev.id.isNotBlank()) ev.id else "${ev.type}_${ev.title}_${ev.timestamp}"
-                existingKeys.add(key)
-            }
-
             var changed = false
             for (inEv in incoming) {
-                val key = if (inEv.id.isNotBlank()) inEv.id else "${inEv.type}_${inEv.title}_${inEv.timestamp}"
                 if (inEv.id.isNotBlank() && deletedIds.contains(inEv.id)) {
                     continue
                 }
-                if (deletedIds.contains(key)) {
+                val contentKey = "${inEv.type}_${inEv.title.trim()}_${inEv.timestamp}"
+                if (deletedIds.contains(contentKey)) {
                     continue
                 }
-                if (!existingKeys.contains(key)) {
+
+                if (!isDuplicate(inEv, current)) {
                     current.add(inEv)
-                    existingKeys.add(key)
                     changed = true
                 }
             }
@@ -139,7 +160,7 @@ object EventCache {
             val deletedIds = getDeletedIds(context)
             for (ev in toDelete) {
                 if (ev.id.isNotBlank()) deletedIds.add(ev.id)
-                deletedIds.add("${ev.type}_${ev.title}_${ev.timestamp}")
+                deletedIds.add("${ev.type}_${ev.title.trim()}_${ev.timestamp}")
             }
             saveDeletedIds(context, deletedIds)
 
@@ -160,7 +181,7 @@ object EventCache {
             val deletedIds = getDeletedIds(context)
             for (ev in current) {
                 if (ev.id.isNotBlank()) deletedIds.add(ev.id)
-                deletedIds.add("${ev.type}_${ev.title}_${ev.timestamp}")
+                deletedIds.add("${ev.type}_${ev.title.trim()}_${ev.timestamp}")
             }
             saveDeletedIds(context, deletedIds)
             saveEvents(context, emptyList())
