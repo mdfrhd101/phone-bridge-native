@@ -33,18 +33,19 @@ object AppUpdater {
         thread {
             try {
                 val url = URL(RELEASES_API)
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
-                conn.setRequestProperty("User-Agent", "PhoneBridge-Android")
-                conn.connectTimeout = 7000
-                conn.readTimeout = 7000
+                val conn = (url.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    setRequestProperty("Accept", "application/vnd.github.v3+json")
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)")
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                }
 
                 if (conn.responseCode == 200) {
                     val response = conn.inputStream.bufferedReader().use { it.readText() }
                     val json = JSONObject(response)
                     val tag = json.optString("tag_name", "").trimStart('v')
-                    val notes = json.optString("body", "Bug fixes and improvements.")
+                    val notes = json.optString("body", "Bug fixes and performance improvements.")
 
                     var apkUrl: String? = null
                     val assets = json.optJSONArray("assets")
@@ -54,7 +55,10 @@ object AppUpdater {
                             val name = asset.optString("name", "")
                             if (name.endsWith(".apk")) {
                                 apkUrl = asset.optString("browser_download_url")
-                                break
+                                // Prefer PB.apk if both exist
+                                if (name.equals("PB.apk", ignoreCase = true)) {
+                                    break
+                                }
                             }
                         }
                     }
@@ -71,12 +75,12 @@ object AppUpdater {
                         }
                     } else if (!silentIfNone) {
                         Handler(Looper.getMainLooper()).post {
-                            Toast.makeText(context, "PhoneBridge is up to date (v$currentVersion)", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "PB is up to date (v$currentVersion)", Toast.LENGTH_SHORT).show()
                         }
                     }
                 } else if (!silentIfNone) {
                     Handler(Looper.getMainLooper()).post {
-                        Toast.makeText(context, "No releases found on GitHub yet.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Update check status: ${conn.responseCode}", Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {
@@ -104,20 +108,22 @@ object AppUpdater {
     }
 
     fun promptUpdateDialog(activity: Activity, info: UpdateInfo) {
+        if (activity.isFinishing || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed)) return
+
         AlertDialog.Builder(activity)
-            .setTitle("🚀 New Update Available (v${info.versionName})")
-            .setMessage("A new version of PhoneBridge has been pushed to GitHub!\n\nRelease notes:\n${info.notes}\n\nDo you want to update now?")
+            .setTitle("🚀 New PB Update Available (v${info.versionName})")
+            .setMessage("A new version of PB is ready!\n\nWhat's new:\n${info.notes}\n\nDo you want to update now?")
             .setPositiveButton("Update Now") { _, _ ->
-                downloadAndInstall(activity, info.downloadUrl)
+                downloadAndInstall(activity, info.downloadUrl, info.versionName)
             }
             .setNegativeButton("Later", null)
             .show()
     }
 
-    fun downloadAndInstall(activity: Activity, apkUrl: String) {
+    fun downloadAndInstall(activity: Activity, apkUrl: String, versionName: String = "") {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (!activity.packageManager.canRequestPackageInstalls()) {
-                Toast.makeText(activity, "Please allow permission to install updates", Toast.LENGTH_LONG).show()
+                Toast.makeText(activity, "Please allow 'Install unknown apps' permission to install updates", Toast.LENGTH_LONG).show()
                 val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
                     data = Uri.parse("package:${activity.packageName}")
                 }
@@ -128,8 +134,8 @@ object AppUpdater {
 
         @Suppress("DEPRECATION")
         val progressDialog = ProgressDialog(activity).apply {
-            setTitle("Downloading Update")
-            setMessage("Downloading PhoneBridge v... Please wait.")
+            setTitle("Downloading PB Update")
+            setMessage("Downloading PB ${if (versionName.isNotBlank()) "v$versionName" else ""}... Please wait.")
             setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
             isIndeterminate = false
             max = 100
@@ -139,20 +145,33 @@ object AppUpdater {
 
         thread {
             try {
-                val url = URL(apkUrl)
-                var conn = url.openConnection() as HttpURLConnection
-                conn.instanceFollowRedirects = true
+                var currentUrl = apkUrl
+                var conn: HttpURLConnection
+                var redirects = 0
 
-                var status = conn.responseCode
-                if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
-                    status == HttpURLConnection.HTTP_MOVED_PERM ||
-                    status == 307 || status == 308) {
-                    val newUrl = conn.getHeaderField("Location")
-                    conn = URL(newUrl).openConnection() as HttpURLConnection
+                // Follow redirects up to 5 times (GitHub releases redirect to AWS S3/objects.githubusercontent.com)
+                while (true) {
+                    conn = URL(currentUrl).openConnection() as HttpURLConnection
+                    conn.instanceFollowRedirects = true
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)")
+                    conn.connectTimeout = 15000
+                    conn.readTimeout = 20000
+
+                    val status = conn.responseCode
+                    if (status in 301..308 && redirects < 5) {
+                        val location = conn.getHeaderField("Location")
+                        if (!location.isNullOrBlank()) {
+                            currentUrl = location
+                            conn.disconnect()
+                            redirects++
+                            continue
+                        }
+                    }
+                    break
                 }
 
                 val totalLength = conn.contentLength
-                val apkFile = File(activity.cacheDir, "PhoneBridge-update.apk")
+                val apkFile = File(activity.cacheDir, "PB-update.apk")
                 if (apkFile.exists()) apkFile.delete()
 
                 val input = conn.inputStream
@@ -168,7 +187,9 @@ object AppUpdater {
                     if (totalLength > 0) {
                         val progress = ((totalBytesRead * 100) / totalLength).toInt()
                         Handler(Looper.getMainLooper()).post {
-                            progressDialog.progress = progress
+                            if (progressDialog.isShowing) {
+                                progressDialog.progress = progress
+                            }
                         }
                     }
                 }
@@ -176,15 +197,20 @@ object AppUpdater {
                 output.flush()
                 output.close()
                 input.close()
+                conn.disconnect()
 
                 Handler(Looper.getMainLooper()).post {
-                    progressDialog.dismiss()
+                    try {
+                        if (progressDialog.isShowing) progressDialog.dismiss()
+                    } catch (_: Exception) {}
                     installApk(activity, apkFile)
                 }
 
             } catch (e: Exception) {
                 Handler(Looper.getMainLooper()).post {
-                    progressDialog.dismiss()
+                    try {
+                        if (progressDialog.isShowing) progressDialog.dismiss()
+                    } catch (_: Exception) {}
                     Toast.makeText(activity, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
@@ -193,6 +219,15 @@ object AppUpdater {
 
     private fun installApk(activity: Activity, apkFile: File) {
         try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !activity.packageManager.canRequestPackageInstalls()) {
+                Toast.makeText(activity, "Please allow 'Install unknown apps' to complete the update", Toast.LENGTH_LONG).show()
+                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:${activity.packageName}")
+                }
+                activity.startActivity(intent)
+                return
+            }
+
             val contentUri = FileProvider.getUriForFile(
                 activity,
                 "${activity.packageName}.provider",

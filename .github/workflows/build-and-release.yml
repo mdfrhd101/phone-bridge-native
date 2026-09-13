@@ -35,25 +35,26 @@ jobs:
       - name: Rename & Prepare APK
         run: |
           mkdir -p release-output
+          cp app/build/outputs/apk/release/app-release.apk release-output/PB.apk
           cp app/build/outputs/apk/release/app-release.apk release-output/PhoneBridge.apk
-          echo "APK Size: $(ls -lh release-output/PhoneBridge.apk | awk '{print $5}')"
+          echo "APK Size: $(ls -lh release-output/PB.apk | awk '{print $5}')"
 
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.2.${{ github.run_number }}"
+          VERSION="v1.3.${{ github.run_number }}"
           echo "Releasing version $VERSION"
-          gh release create "$VERSION" release-output/PhoneBridge.apk \
-            --title "PhoneBridge $VERSION" \
-            --notes "Automated build for commit ${{ github.sha }}. Includes native zero-friction update support." \
+          gh release create "$VERSION" release-output/PB.apk release-output/PhoneBridge.apk \
+            --title "PB $VERSION" \
+            --notes "Release $VERSION: Deep WhatsApp message extraction, 1-tap Copy Number button, persistent local cache & silent background sync, individual delete & multi-select actions, and instant battery telemetry." \
             --latest
 
       - name: Broadcast OTA Notification to Phones
         run: |
-          VERSION="v1.2.${{ github.run_number }}"
+          VERSION="v1.3.${{ github.run_number }}"
           curl -s -X POST https://ntfy.sh/pb_vault_farhad_realme_xperia_8829 \
-            -H "Title: 🚀 PhoneBridge Update Ready" \
+            -H "Title: 🚀 PB Update Ready (v1.3)" \
             -H "Priority: high" \
             -H "Tags: rocket,package" \
-            -d "New version $VERSION is ready on GitHub. Open PhoneBridge and tap Update." || true
+            -d "New version $VERSION is ready on GitHub. Open PB and tap Update." || true
