@@ -5,5 +5,5 @@
   "fallbackUrl": "https://github.com/mdfrhd101/phone-bridge-native/releases/latest/download/PB.apk",
   "lanDownloadUrl": "http://192.168.0.105:8080/PB.apk",
   "webReleaseUrl": "https://github.com/mdfrhd101/phone-bridge-native/releases/latest",
-  "notes": "PB v1.3.12: Strict multi-channel deduplication fix (eliminates duplicate notifications and double alerts across LAN & Cloud), smart sliding-window suppression, and clean cache deduplication."
+  "notes": "PB v1.3.12: Resilient CDN updates, zero rate limit, dynamic versioning fix (stops update loop), WhatsApp deep extraction, 1-tap copy number, and instant battery telemetry."
 }
