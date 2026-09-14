@@ -29,6 +29,9 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x gradlew
 
+      - name: Run Unit Tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
       - name: Build Release APK
         run: |
           VERSION="1.3.${{ github.run_number }}"
@@ -72,16 +75,10 @@ jobs:
           echo "Releasing version $VERSION"
           gh release create "$VERSION" release-output/PB.apk release-output/PhoneBridge.apk release-output/version.json \
             --title "PB $VERSION" \
-            --notes "Release $VERSION: Multi-Server Redundant Cloud Relay (ntfy.envs.net + ntfy.ca), Zero-Latency Local Wi-Fi P2P Sync (<1ms), Real-time accurate battery telemetry, and seamless OTA in-app updates." \
+            --notes "Release $VERSION: End-to-end encrypted relay, redundant cloud mirrors, zero-latency LAN P2P sync, persistent host outbox with LAN re-sync, self-healing viewer stream, and seamless in-app OTA updates." \
             --latest
 
-      - name: Broadcast OTA Notification to Phones
-        run: |
-          VERSION="v1.3.${{ github.run_number }}"
-          for endpoint in https://ntfy.envs.net https://ntfy.ca https://ntfy.sh; do
-            curl -s -m 5 -X POST "$endpoint/pb_sec_9e2f41bc78a04d5881a2e9b3d0476a51" \
-              -H "Title: 🚀 PB Update Ready ($VERSION)" \
-              -H "Priority: high" \
-              -H "Tags: rocket,package" \
-              -d "PB $VERSION is ready on GitHub. Open PB and tap Update." || true
-          done
+      # Update discovery is handled inside the app: HostActivity and ViewerActivity both run a
+      # silent AppUpdater.checkForUpdate() on every resume against version.json. The previous
+      # ntfy "update ready" push targeted a topic the app never subscribed to (dead), so it was
+      # removed rather than left misleading.

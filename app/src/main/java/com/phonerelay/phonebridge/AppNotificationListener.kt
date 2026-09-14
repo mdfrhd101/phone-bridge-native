@@ -2,10 +2,13 @@ package com.phonerelay.phonebridge
 
 import android.app.Notification
 import android.content.ComponentName
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Telephony
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.telecom.TelecomManager
 import androidx.core.app.NotificationCompat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -31,6 +34,10 @@ class AppNotificationListener : NotificationListenerService() {
 
         val packageName = sbn.packageName ?: return
         if (packageName == applicationContext.packageName) return
+
+        // SMS and incoming calls are already forwarded by SmsReceiver and the call monitor.
+        // Ignore the default SMS/dialer apps here so a single SMS/call is not reported twice.
+        if (isIgnoredSource(packageName)) return
 
         if (!BridgePreferences.isForwardNotifications(applicationContext)) return
 
@@ -123,6 +130,25 @@ class AppNotificationListener : NotificationListenerService() {
             sender = if (title.isNotBlank()) title else convoTitle,
             extra = timestamp
         )
+    }
+
+    private fun isIgnoredSource(pkg: String): Boolean {
+        return try {
+            val ctx: Context = applicationContext
+            val defaultSms = Telephony.Sms.getDefaultSmsPackage(ctx)
+            if (defaultSms != null && pkg == defaultSms) return true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
+                val defaultDialer = tm?.defaultDialerPackage
+                if (defaultDialer != null && pkg == defaultDialer) return true
+            }
+            // Common stock SMS/phone packages as a safety net.
+            pkg == "com.android.messaging" || pkg == "com.google.android.apps.messaging" ||
+                pkg == "com.android.mms" || pkg == "com.android.dialer" ||
+                pkg == "com.google.android.dialer" || pkg == "com.android.server.telecom"
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun getAppLabel(packageName: String): String {

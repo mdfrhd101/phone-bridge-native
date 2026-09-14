@@ -7,7 +7,6 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 
 data class NativeEvent(
     val id: String,
@@ -40,12 +39,15 @@ object FirebaseRelay {
     // Single unified topic to prevent cross-topic duplication
     const val PRIMARY_TOPIC = "pb_vault_farhad_realme_xperia_8829"
 
-    // Multi-mirror cloud relay cluster
+    // Multi-mirror cloud relay cluster (order = failover priority)
     val CLOUD_RELAY_ENDPOINTS = listOf(
         "https://ntfy.envs.net",
         "https://ntfy.ca",
         "https://ntfy.sh"
     )
+
+    // Endpoints we POST to (first two are the fastest from BD; the third is a read fallback).
+    private val PUBLISH_ENDPOINTS = listOf("https://ntfy.envs.net", "https://ntfy.ca")
 
     fun getTopics(context: Context): List<String> {
         val code = BridgePreferences.getPairCode(context)
@@ -56,9 +58,9 @@ object FirebaseRelay {
         }
     }
 
-    fun getPrimaryTopic(context: Context): String {
-        return getTopics(context).first()
-    }
+    fun getPrimaryTopic(context: Context): String = getTopics(context).first()
+
+    private fun telemetryTopic(context: Context): String = getPrimaryTopic(context) + "_telemetry"
 
     fun generateDeterministicId(eventType: String, title: String, body: String): String {
         val clean = "${eventType.trim().lowercase()}|${title.trim().lowercase()}|${body.trim().lowercase()}"
@@ -76,7 +78,7 @@ object FirebaseRelay {
         otp: String = "",
         extra: String = ""
     ) {
-        // 1. Store locally in event logs
+        // 1. Store locally in the host event log (for the Host screen)
         BridgePreferences.addLog(context, eventType, title, if (otp.isNotBlank()) "OTP: $otp | $body" else body)
 
         val eventId = generateDeterministicId(eventType, title, body)
@@ -92,52 +94,40 @@ object FirebaseRelay {
             deviceModel = android.os.Build.MODEL ?: "Realme"
         )
 
-        // 2. Broadcast immediately over Local Wi-Fi LAN (0ms latency)
+        // 2. Persist to the host outbox so a viewer that was offline for a long time can pull
+        //    the full backlog over the LAN when it returns home (survives host reboot).
+        EventCache.saveEvent(context, event)
+
+        // 3. Broadcast immediately over Local Wi-Fi LAN (encrypted, ~0ms latency)
         LanBridge.broadcastEvent(context, event)
 
+        // 4. Dispatch to the redundant cloud relays as an ENCRYPTED blob (no plaintext leak)
+        val pairCode = BridgePreferences.getPairCode(context)
+        val cipher = Crypto.encrypt(pairCode, EventCodec.serializeEvent(event))
         val topic = getPrimaryTopic(context)
 
-        // 3. Dispatch to Multi-Server Redundant Cloud Relays
         Thread {
-            for (endpoint in listOf("https://ntfy.envs.net", "https://ntfy.ca")) {
+            for (endpoint in PUBLISH_ENDPOINTS) {
                 try {
                     val url = URL("$endpoint/$topic")
                     val conn = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "POST"
                         setRequestProperty("Content-Type", "text/plain; charset=UTF-8")
-                        setRequestProperty("Title", title)
+                        // Generic, non-revealing metadata only.
+                        setRequestProperty("Title", "PhoneBridge")
                         setRequestProperty("Priority", "high")
-                        setRequestProperty("X-Type", eventType)
-                        setRequestProperty("X-Id", eventId)
-                        setRequestProperty("X-Sender", URLEncoder.encode(sender, "UTF-8"))
-                        setRequestProperty("X-OTP", otp)
-                        setRequestProperty("X-Extra", URLEncoder.encode(extra, "UTF-8"))
-                        setRequestProperty("X-Model", URLEncoder.encode(android.os.Build.MODEL ?: "Realme", "UTF-8"))
-                        if (otp.isNotBlank()) {
-                            setRequestProperty("Tags", "key,incoming_envelope")
-                        } else if (eventType.startsWith("CALL")) {
-                            setRequestProperty("Tags", "telephone_receiver,phone")
-                        } else {
-                            setRequestProperty("Tags", "bell")
-                        }
+                        setRequestProperty("Tags", "lock")
                         connectTimeout = 3500
                         readTimeout = 3500
                         doOutput = true
                     }
-
-                    OutputStreamWriter(conn.outputStream, "UTF-8").use { writer ->
-                        writer.write(body)
-                        writer.flush()
-                    }
-
+                    OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(cipher); it.flush() }
                     conn.responseCode
                     conn.disconnect()
                 } catch (_: Exception) {
                     // failover to next mirror
                 }
             }
-
-            // 4. Also dispatch to Firebase if user configured it
             dispatchToFirebaseIfConfigured(context, eventType, title, body, sender, otp, extra)
         }.start()
     }
@@ -156,37 +146,25 @@ object FirebaseRelay {
             deviceModel = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
         )
 
-        // 1. Broadcast immediately to Local Wi-Fi LAN
+        // 1. Broadcast immediately to Local Wi-Fi LAN (encrypted)
         LanBridge.broadcastTelemetry(context, telemetry)
 
-        val topic = getPrimaryTopic(context) + "_telemetry"
+        val pairCode = BridgePreferences.getPairCode(context)
+        val cipher = Crypto.encrypt(pairCode, EventCodec.serializeTelemetry(telemetry))
+        val topic = telemetryTopic(context)
 
-        // 2. Dispatch to Multi-Server Redundant Cloud Relays
         Thread {
-            for (endpoint in listOf("https://ntfy.envs.net", "https://ntfy.ca")) {
+            for (endpoint in PUBLISH_ENDPOINTS) {
                 try {
                     val url = URL("$endpoint/$topic")
                     val conn = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "POST"
-                        setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                        setRequestProperty("Content-Type", "text/plain; charset=UTF-8")
                         connectTimeout = 3500
                         readTimeout = 3500
                         doOutput = true
                     }
-
-                    val json = JSONObject().apply {
-                        put("battery", batteryPercent)
-                        put("isCharging", isCharging)
-                        put("network", networkType)
-                        put("lastSeen", System.currentTimeMillis())
-                        put("deviceModel", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
-                    }
-
-                    OutputStreamWriter(conn.outputStream, "UTF-8").use { writer ->
-                        writer.write(json.toString())
-                        writer.flush()
-                    }
-
+                    OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(cipher); it.flush() }
                     conn.responseCode
                     conn.disconnect()
                 } catch (_: Exception) {}
@@ -196,21 +174,21 @@ object FirebaseRelay {
 
     fun fetchTelemetry(context: Context, callback: (NativeTelemetry?) -> Unit) {
         Thread {
-            // 1. If we discovered a LAN host recently, query it first with 1.5s timeout
+            val pairCode = BridgePreferences.getPairCode(context)
+
+            // 1. If we discovered a LAN host recently, query it first
             val hostIp = LanBridge.lastDiscoveredHostIp
             if (!hostIp.isNullOrBlank() && (System.currentTimeMillis() - LanBridge.lastDiscoveredHostTime < 30000L)) {
-                val lanTelemetry = LanBridge.queryLanTelemetry(hostIp, 1500)
+                val lanTelemetry = LanBridge.queryLanTelemetry(context, hostIp, 1500)
                 if (lanTelemetry != null) {
                     callback(lanTelemetry)
                     return@Thread
                 }
             }
 
-            // 2. Query Cloud Relays with fast failover (ntfy.envs.net -> ntfy.ca -> ntfy.sh)
-            val topic = getPrimaryTopic(context) + "_telemetry"
-            val servers = CLOUD_RELAY_ENDPOINTS
-
-            for (server in servers) {
+            // 2. Query cloud relays with fast failover
+            val topic = telemetryTopic(context)
+            for (server in CLOUD_RELAY_ENDPOINTS) {
                 try {
                     val url = URL("$server/$topic/json?poll=1&limit=1")
                     val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -218,34 +196,22 @@ object FirebaseRelay {
                         connectTimeout = 3000
                         readTimeout = 3000
                     }
-
                     if (conn.responseCode == 200) {
                         val reader = BufferedReader(InputStreamReader(conn.inputStream, "UTF-8"))
-                        var line: String?
-                        var lastJson: JSONObject? = null
+                        var line: String? = null
+                        var lastTelemetry: NativeTelemetry? = null
                         while (reader.readLine().also { line = it } != null) {
-                            try {
-                                val obj = JSONObject(line!!)
-                                if (obj.optString("event") == "message") {
-                                    val messageStr = obj.optString("message", "")
-                                    if (messageStr.startsWith("{")) {
-                                        lastJson = JSONObject(messageStr)
-                                    }
+                            val inner = decodeMessageLine(pairCode, line) ?: continue
+                            if (EventCodec.kindOf(inner) == EventCodec.KIND_TELEMETRY) {
+                                lastTelemetry = EventCodec.parseTelemetry(inner).let {
+                                    it.copy(network = "${it.network} (Cloud ☁️)")
                                 }
-                            } catch (_: Exception) {}
+                            }
                         }
                         reader.close()
                         conn.disconnect()
-
-                        if (lastJson != null) {
-                            val battery = lastJson.optInt("battery", -1)
-                            val isCharging = lastJson.optBoolean("isCharging", false)
-                            val network = lastJson.optString("network", "Connected")
-                            val lastSeen = lastJson.optLong("lastSeen", 0L)
-                            val model = lastJson.optString("deviceModel", "Realme Phone")
-
-                            val telemetry = NativeTelemetry(battery, isCharging, network, lastSeen, model)
-                            callback(telemetry)
+                        if (lastTelemetry != null) {
+                            callback(lastTelemetry)
                             return@Thread
                         }
                     } else {
@@ -259,94 +225,46 @@ object FirebaseRelay {
 
     fun fetchEvents(context: Context, callback: (List<NativeEvent>) -> Unit) {
         Thread {
+            val pairCode = BridgePreferences.getPairCode(context)
             val list = mutableListOf<NativeEvent>()
 
-            // 1. If LAN host is known, query it directly
+            // 1. If a LAN host is known, pull its full outbox directly (fast home re-sync)
             val hostIp = LanBridge.lastDiscoveredHostIp
             if (!hostIp.isNullOrBlank()) {
-                val lanEvents = LanBridge.queryLanEvents(hostIp, 1800)
-                if (lanEvents.isNotEmpty()) {
-                    list.addAll(lanEvents)
-                }
+                list.addAll(LanBridge.queryLanEvents(context, hostIp, 2500))
             }
 
-            // 2. Query Cloud Relays with fast failover
+            // 2. Query cloud relays; ask for everything the server still retains
             val topic = getPrimaryTopic(context)
-            val servers = CLOUD_RELAY_ENDPOINTS
-
-            for (server in servers) {
+            for (server in CLOUD_RELAY_ENDPOINTS) {
                 try {
-                    val url = URL("$server/$topic/json?poll=1&since=12h")
+                    val url = URL("$server/$topic/json?poll=1&since=all")
                     val conn = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
                         connectTimeout = 3000
-                        readTimeout = 3000
+                        readTimeout = 4000
                     }
-
                     if (conn.responseCode == 200) {
                         val reader = BufferedReader(InputStreamReader(conn.inputStream, "UTF-8"))
-                        var line: String?
-                        var gotEvents = false
+                        var line: String? = null
+                        var gotAny = false
                         while (reader.readLine().also { line = it } != null) {
-                            try {
-                                val obj = JSONObject(line!!)
-                                if (obj.optString("event") == "message") {
-                                    gotEvents = true
-                                    val id = obj.optString("id", "")
-                                    val title = obj.optString("title", "Event")
-                                    val body = obj.optString("message", "")
-                                    val timeSec = obj.optLong("time", 0L)
-                                    val timestamp = if (timeSec > 0) timeSec * 1000L else System.currentTimeMillis()
-
-                                    val tags = obj.optJSONArray("tags")
-                                    var type = "EVENT"
-                                    var isCall = false
-                                    var isSms = false
-
-                                    if (tags != null) {
-                                        for (i in 0 until tags.length()) {
-                                            val t = tags.optString(i)
-                                            if (t == "phone" || t == "telephone_receiver") isCall = true
-                                            if (t == "key" || t == "incoming_envelope") isSms = true
-                                        }
-                                    }
-
-                                    if (isCall || title.contains("Call", true)) {
-                                        type = if (title.contains("Missed", true)) "CALL_MISSED" else "CALL_RINGING"
-                                    } else if (isSms || title.contains("SMS", true) || body.contains("OTP", true)) {
-                                        type = "SMS"
-                                    } else {
-                                        type = "NOTIFICATION"
-                                    }
-
-                                    val otp = extractOtp(body)
-
-                                    list.add(
-                                        NativeEvent(
-                                            id = id,
-                                            type = type,
-                                            title = title,
-                                            body = body,
-                                            sender = title,
-                                            otp = otp ?: "",
-                                            extra = "",
-                                            timestamp = timestamp,
-                                            deviceModel = "Realme"
-                                        )
-                                    )
-                                }
-                            } catch (_: Exception) {}
+                            val inner = decodeMessageLine(pairCode, line) ?: continue
+                            if (EventCodec.kindOf(inner) != EventCodec.KIND_TELEMETRY) {
+                                gotAny = true
+                                list.add(EventCodec.parseEvent(inner))
+                            }
                         }
                         reader.close()
                         conn.disconnect()
-                        if (gotEvents) break
+                        if (gotAny) break
                     } else {
                         conn.disconnect()
                     }
                 } catch (_: Exception) {}
             }
 
-            // Deduplicate incoming list by content and timestamp
+            // Deduplicate by id, then by content within a 90s window
             val uniqueList = mutableListOf<NativeEvent>()
             for (ev in list.sortedByDescending { it.timestamp }) {
                 val isDup = uniqueList.any { existing ->
@@ -356,18 +274,29 @@ object FirebaseRelay {
                      existing.body.trim().equals(ev.body.trim(), ignoreCase = true) &&
                      Math.abs(existing.timestamp - ev.timestamp) < 90000L)
                 }
-                if (!isDup) {
-                    uniqueList.add(ev)
-                }
+                if (!isDup) uniqueList.add(ev)
             }
             callback(uniqueList)
         }.start()
     }
 
-    private fun extractOtp(text: String): String? {
-        val pattern = java.util.regex.Pattern.compile("(?<!\\d)(\\d{4,8})(?!\\d)")
-        val matcher = pattern.matcher(text)
-        return if (matcher.find()) matcher.group(1) else null
+    /**
+     * Takes one raw line of an ntfy `/json` stream/poll and returns the decrypted inner
+     * PhoneBridge JSON, or null for keepalives / non-message events / undecryptable payloads.
+     */
+    fun decodeMessageLine(pairCode: String, line: String?): JSONObject? {
+        if (line.isNullOrBlank()) return null
+        return try {
+            val envelope = JSONObject(line)
+            if (envelope.optString("event") != "message") return null
+            val messageStr = envelope.optString("message", "")
+            if (messageStr.isBlank()) return null
+            val plain = Crypto.decrypt(pairCode, messageStr) ?: return null
+            if (!plain.startsWith("{")) return null
+            JSONObject(plain)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun dispatchToFirebaseIfConfigured(
@@ -386,7 +315,8 @@ object FirebaseRelay {
         if (projectId.isBlank() || apiKey.isBlank()) return
 
         try {
-            val urlStr = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/vaults/$pairCode/events?key=$apiKey"
+            val safePair = java.net.URLEncoder.encode(pairCode, "UTF-8")
+            val urlStr = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/vaults/$safePair/events?key=$apiKey"
             val url = URL(urlStr)
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -405,13 +335,9 @@ object FirebaseRelay {
                 put("extra", JSONObject().put("stringValue", extra))
                 put("timestamp", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
             }
-
             val payload = JSONObject().apply { put("fields", fields) }
 
-            OutputStreamWriter(conn.outputStream, "UTF-8").use { writer ->
-                writer.write(payload.toString())
-                writer.flush()
-            }
+            OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()); it.flush() }
             conn.responseCode
             conn.disconnect()
         } catch (_: Exception) {}

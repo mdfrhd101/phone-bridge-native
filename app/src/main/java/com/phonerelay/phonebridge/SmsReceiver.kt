@@ -9,7 +9,6 @@ import android.provider.Telephony
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.regex.Pattern
 
 class SmsReceiver : BroadcastReceiver() {
 
@@ -31,7 +30,7 @@ class SmsReceiver : BroadcastReceiver() {
         val displayName = if (contactName.isNotBlank()) "$contactName ($sender)" else sender
         val timestamp = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date())
 
-        val otpCode = extractOtp(fullBody) ?: ""
+        val otpCode = EventCodec.extractOtp(fullBody) ?: ""
 
         FirebaseRelay.sendEvent(
             context = context,
@@ -42,30 +41,6 @@ class SmsReceiver : BroadcastReceiver() {
             otp = otpCode,
             extra = timestamp
         )
-    }
-
-    private fun extractOtp(text: String): String? {
-        val lower = text.lowercase(Locale.getDefault())
-        val isOtpMessage = lower.contains("otp") ||
-                lower.contains("code") ||
-                lower.contains("pin") ||
-                lower.contains("verification") ||
-                lower.contains("password") ||
-                lower.contains("secret") ||
-                lower.contains("bkash") ||
-                lower.contains("nagad")
-
-        val pattern = Pattern.compile("(?<!\\d)(\\d{4,8})(?!\\d)")
-        val matcher = pattern.matcher(text)
-        return if (matcher.find()) {
-            matcher.group(1)
-        } else if (isOtpMessage) {
-            val fallbackPattern = Pattern.compile("\\b(\\d{4,8})\\b")
-            val fallbackMatcher = fallbackPattern.matcher(text)
-            if (fallbackMatcher.find()) fallbackMatcher.group(1) else null
-        } else {
-            null
-        }
     }
 
     private fun getContactName(context: Context, phoneNumber: String): String {

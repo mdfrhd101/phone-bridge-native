@@ -3,6 +3,7 @@ package com.phonerelay.phonebridge
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import androidx.appcompat.app.AppCompatActivity
@@ -30,11 +31,13 @@ class ModeSelectionActivity : AppCompatActivity() {
         val rbHost = findViewById<RadioButton>(R.id.rbHost)
         val rbViewer = findViewById<RadioButton>(R.id.rbViewer)
         val btnContinue = findViewById<Button>(R.id.btnContinue)
+        val etPairCode = findViewById<EditText>(R.id.etPairCode)
 
-        // Ensure default pair code is pre-configured
+        // Ensure default pair code is pre-configured, and show the current one for editing.
         if (BridgePreferences.getPairCode(this).isBlank()) {
             BridgePreferences.setPairCode(this, "realme-xperia")
         }
+        etPairCode.setText(BridgePreferences.getPairCode(this))
 
         fun updateSelection(role: String) {
             selectedRole = role
@@ -59,7 +62,10 @@ class ModeSelectionActivity : AppCompatActivity() {
 
         btnContinue.setOnClickListener {
             BridgePreferences.setDeviceRole(this, selectedRole)
-            if (BridgePreferences.getPairCode(this).isBlank()) {
+            val enteredCode = etPairCode.text?.toString()?.trim().orEmpty()
+            if (enteredCode.isNotBlank()) {
+                BridgePreferences.setPairCode(this, enteredCode)
+            } else if (BridgePreferences.getPairCode(this).isBlank()) {
                 BridgePreferences.setPairCode(this, "realme-xperia")
             }
 

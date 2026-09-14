@@ -17,41 +17,31 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
 
+/**
+ * Zero-latency local Wi-Fi P2P engine. All payloads (UDP beacons and HTTP responses) are
+ * end-to-end encrypted with the pair-code key, so the LAN transport needs no separate auth
+ * and is unreadable to other devices on the same network.
+ */
 object LanBridge {
     private const val TAG = "LanBridge"
     const val UDP_PORT = 8889
     const val HTTP_PORT = 8888
 
-    @Volatile
-    var lastDiscoveredHostIp: String? = null
-    @Volatile
-    var lastDiscoveredHostTime: Long = 0L
+    @Volatile var lastDiscoveredHostIp: String? = null
+    @Volatile var lastDiscoveredHostTime: Long = 0L
 
-    @Volatile
-    private var isReceiverRunning = false
+    @Volatile private var isReceiverRunning = false
     private var receiverThread: Thread? = null
     private var multicastLock: WifiManager.MulticastLock? = null
 
-    @Volatile
-    private var isServerRunning = false
+    @Volatile private var isServerRunning = false
     private var serverSocket: ServerSocket? = null
     private var serverThread: Thread? = null
+    @Volatile private var appContext: Context? = null
 
-    private val localEventsHistory = mutableListOf<NativeEvent>()
-    @Volatile
-    private var latestLocalTelemetry: NativeTelemetry? = null
-
-    fun setLatestTelemetry(telemetry: NativeTelemetry) {
-        latestLocalTelemetry = telemetry
-    }
-
-    fun addLocalEvent(event: NativeEvent) {
-        synchronized(localEventsHistory) {
-            localEventsHistory.add(0, event)
-            if (localEventsHistory.size > 100) {
-                localEventsHistory.removeAt(localEventsHistory.size - 1)
-            }
-        }
+    private fun pairCode(): String {
+        val ctx = appContext ?: return "realme-xperia"
+        return BridgePreferences.getPairCode(ctx)
     }
 
     // ==========================================
@@ -59,16 +49,14 @@ object LanBridge {
     // ==========================================
 
     fun startHostLanServices(context: Context) {
+        appContext = context.applicationContext
         if (isServerRunning) return
         isServerRunning = true
 
         serverThread = Thread {
             try {
-                serverSocket = ServerSocket(HTTP_PORT).apply {
-                    reuseAddress = true
-                }
+                serverSocket = ServerSocket(HTTP_PORT).apply { reuseAddress = true }
                 Log.i(TAG, "Host LAN HTTP server started on port $HTTP_PORT")
-
                 while (isServerRunning) {
                     try {
                         val client: Socket = serverSocket?.accept() ?: break
@@ -80,17 +68,12 @@ object LanBridge {
             } catch (e: Exception) {
                 Log.e(TAG, "LAN server socket error", e)
             }
-        }.apply {
-            isDaemon = true
-            start()
-        }
+        }.apply { isDaemon = true; start() }
     }
 
     fun stopHostLanServices() {
         isServerRunning = false
-        try {
-            serverSocket?.close()
-        } catch (_: Exception) {}
+        try { serverSocket?.close() } catch (_: Exception) {}
         serverThread?.interrupt()
         serverThread = null
     }
@@ -101,55 +84,28 @@ object LanBridge {
                 client.soTimeout = 3000
                 val reader = BufferedReader(InputStreamReader(client.getInputStream(), "UTF-8"))
                 val requestLine = reader.readLine() ?: return@Thread
-
                 val parts = requestLine.split(" ")
                 val path = if (parts.size > 1) parts[1] else "/"
 
-                val (statusCode, bodyJson) = when {
+                val (statusCode, plainBody) = when {
                     path.startsWith("/telemetry") -> {
-                        val t = latestLocalTelemetry
-                        if (t != null) {
-                            val json = JSONObject().apply {
-                                put("battery", t.battery)
-                                put("isCharging", t.isCharging)
-                                put("network", t.network)
-                                put("lastSeen", t.lastSeen)
-                                put("deviceModel", t.deviceModel)
-                                put("source", "LAN")
-                            }
-                            Pair("200 OK", json.toString())
-                        } else {
-                            Pair("404 Not Found", "{}")
-                        }
+                        val ctx = appContext
+                        val t = if (ctx != null) HostState.latestTelemetry else null
+                        if (t != null) Pair("200 OK", EventCodec.serializeTelemetry(t))
+                        else Pair("404 Not Found", "{}")
                     }
                     path.startsWith("/events") -> {
-                        val array = JSONArray()
-                        synchronized(localEventsHistory) {
-                            for (ev in localEventsHistory) {
-                                val obj = JSONObject().apply {
-                                    put("id", ev.id)
-                                    put("type", ev.type)
-                                    put("title", ev.title)
-                                    put("body", ev.body)
-                                    put("sender", ev.sender)
-                                    put("otp", ev.otp)
-                                    put("extra", ev.extra)
-                                    put("timestamp", ev.timestamp)
-                                    put("deviceModel", ev.deviceModel)
-                                }
-                                array.put(obj)
-                            }
-                        }
-                        Pair("200 OK", array.toString())
+                        Pair("200 OK", hostEventsJson())
                     }
-                    else -> Pair("404 Not Found", "Not Found")
+                    else -> Pair("404 Not Found", "{}")
                 }
 
-                val bodyBytes = bodyJson.toByteArray(Charsets.UTF_8)
+                // Encrypt the response body so only a device with the pair code can read it.
+                val body = if (statusCode.startsWith("200")) Crypto.encrypt(pairCode(), plainBody) else plainBody
+                val bodyBytes = body.toByteArray(Charsets.UTF_8)
                 val response = "HTTP/1.1 $statusCode\r\n" +
-                        "Content-Type: application/json; charset=UTF-8\r\n" +
+                        "Content-Type: text/plain; charset=UTF-8\r\n" +
                         "Content-Length: ${bodyBytes.size}\r\n" +
-                        "Access-Control-Allow-Origin: *\r\n" +
                         "Connection: close\r\n\r\n"
 
                 val out = client.getOutputStream()
@@ -163,50 +119,30 @@ object LanBridge {
         }.start()
     }
 
+    /** Serve the persistent host outbox (survives reboot) so a long-offline viewer can fully re-sync. */
+    private fun hostEventsJson(): String {
+        val ctx = appContext
+        val events = if (ctx != null) EventCache.loadEvents(ctx) else HostState.recentEvents()
+        val array = JSONArray()
+        for (ev in events) array.put(JSONObject(EventCodec.serializeEvent(ev)))
+        return array.toString()
+    }
+
     fun broadcastTelemetry(context: Context, telemetry: NativeTelemetry) {
-        setLatestTelemetry(telemetry)
+        appContext = context.applicationContext
+        HostState.latestTelemetry = telemetry
+        val cipher = Crypto.encrypt(pairCode(), EventCodec.serializeTelemetry(telemetry))
         Thread {
-            try {
-                val myIp = getLocalIpAddress() ?: ""
-                val json = JSONObject().apply {
-                    put("kind", "TELEMETRY")
-                    put("battery", telemetry.battery)
-                    put("isCharging", telemetry.isCharging)
-                    put("network", telemetry.network)
-                    put("lastSeen", telemetry.lastSeen)
-                    put("deviceModel", telemetry.deviceModel)
-                    put("hostIp", myIp)
-                    put("httpPort", HTTP_PORT)
-                }
-                sendUdpBroadcast(json.toString())
-            } catch (e: Exception) {
-                Log.w(TAG, "Error broadcasting telemetry", e)
-            }
+            try { sendUdpBroadcast(cipher) } catch (e: Exception) { Log.w(TAG, "telemetry beacon failed", e) }
         }.start()
     }
 
     fun broadcastEvent(context: Context, event: NativeEvent) {
-        addLocalEvent(event)
+        appContext = context.applicationContext
+        HostState.addEvent(event)
+        val cipher = Crypto.encrypt(pairCode(), EventCodec.serializeEvent(event))
         Thread {
-            try {
-                val myIp = getLocalIpAddress() ?: ""
-                val json = JSONObject().apply {
-                    put("kind", "EVENT")
-                    put("id", event.id)
-                    put("type", event.type)
-                    put("title", event.title)
-                    put("body", event.body)
-                    put("sender", event.sender)
-                    put("otp", event.otp)
-                    put("extra", event.extra)
-                    put("timestamp", event.timestamp)
-                    put("deviceModel", event.deviceModel)
-                    put("hostIp", myIp)
-                }
-                sendUdpBroadcast(json.toString())
-            } catch (e: Exception) {
-                Log.w(TAG, "Error broadcasting event", e)
-            }
+            try { sendUdpBroadcast(cipher) } catch (e: Exception) { Log.w(TAG, "event beacon failed", e) }
         }.start()
     }
 
@@ -214,18 +150,12 @@ object LanBridge {
         val bytes = message.toByteArray(Charsets.UTF_8)
         var socket: DatagramSocket? = null
         try {
-            socket = DatagramSocket().apply {
-                broadcast = true
-            }
-
-            // 1. Send to 255.255.255.255
-            val universalBroadcast = InetAddress.getByName("255.255.255.255")
-            socket.send(DatagramPacket(bytes, bytes.size, universalBroadcast, UDP_PORT))
-
-            // 2. Also send to specific interface subnet broadcast if detected
-            val subnetBroadcast = getSubnetBroadcastAddress()
-            if (subnetBroadcast != null && subnetBroadcast != universalBroadcast) {
-                socket.send(DatagramPacket(bytes, bytes.size, subnetBroadcast, UDP_PORT))
+            socket = DatagramSocket().apply { broadcast = true }
+            val universal = InetAddress.getByName("255.255.255.255")
+            socket.send(DatagramPacket(bytes, bytes.size, universal, UDP_PORT))
+            val subnet = getSubnetBroadcastAddress()
+            if (subnet != null && subnet != universal) {
+                socket.send(DatagramPacket(bytes, bytes.size, subnet, UDP_PORT))
             }
         } catch (e: Exception) {
             Log.w(TAG, "sendUdpBroadcast failed: ${e.message}")
@@ -243,6 +173,7 @@ object LanBridge {
         onTelemetry: (NativeTelemetry) -> Unit,
         onEvent: (NativeEvent) -> Unit
     ) {
+        appContext = context.applicationContext
         if (isReceiverRunning) return
         isReceiverRunning = true
 
@@ -259,68 +190,33 @@ object LanBridge {
         receiverThread = Thread {
             var socket: DatagramSocket? = null
             try {
-                socket = DatagramSocket(UDP_PORT).apply {
-                    broadcast = true
-                    soTimeout = 4000
-                }
-                val buffer = ByteArray(8192)
-
+                socket = DatagramSocket(UDP_PORT).apply { broadcast = true; soTimeout = 4000 }
+                val buffer = ByteArray(16384)
                 while (isReceiverRunning) {
                     try {
                         val packet = DatagramPacket(buffer, buffer.size)
                         socket.receive(packet)
-                        val msg = String(packet.data, 0, packet.length, Charsets.UTF_8)
+                        val raw = String(packet.data, 0, packet.length, Charsets.UTF_8)
+                        val senderIp = packet.address?.hostAddress ?: ""
 
-                        val json = JSONObject(msg)
-                        val senderIp = packet.address.hostAddress ?: ""
-                        val kind = json.optString("kind", "")
+                        val plain = Crypto.decrypt(pairCode(), raw) ?: continue
+                        if (!plain.startsWith("{")) continue
+                        val json = JSONObject(plain)
 
                         if (senderIp.isNotBlank()) {
-                            lastDiscoveredHostIp = json.optString("hostIp", senderIp)
+                            lastDiscoveredHostIp = senderIp
                             lastDiscoveredHostTime = System.currentTimeMillis()
                         }
 
-                        if (kind == "TELEMETRY") {
-                            val battery = json.optInt("battery", -1)
-                            val isCharging = json.optBoolean("isCharging", false)
-                            val network = json.optString("network", "WiFi")
-                            val lastSeen = json.optLong("lastSeen", System.currentTimeMillis())
-                            val model = json.optString("deviceModel", "Realme Phone")
-
-                            val telemetry = NativeTelemetry(
-                                battery = battery,
-                                isCharging = isCharging,
-                                network = "$network (LAN 🟢)",
-                                lastSeen = lastSeen,
-                                deviceModel = model
-                            )
-                            onTelemetry(telemetry)
-                        } else if (kind == "EVENT") {
-                            val id = json.optString("id", System.currentTimeMillis().toString())
-                            val type = json.optString("type", "EVENT")
-                            val title = json.optString("title", "Alert")
-                            val body = json.optString("body", "")
-                            val sender = json.optString("sender", title)
-                            val otp = json.optString("otp", "")
-                            val extra = json.optString("extra", "")
-                            val timestamp = json.optLong("timestamp", System.currentTimeMillis())
-                            val model = json.optString("deviceModel", "Realme")
-
-                            val event = NativeEvent(
-                                id = id,
-                                type = type,
-                                title = title,
-                                body = body,
-                                sender = sender,
-                                otp = otp,
-                                extra = extra,
-                                timestamp = timestamp,
-                                deviceModel = model
-                            )
-                            onEvent(event)
+                        when (EventCodec.kindOf(json)) {
+                            EventCodec.KIND_TELEMETRY -> {
+                                val t = EventCodec.parseTelemetry(json)
+                                onTelemetry(t.copy(network = "${t.network} (LAN 🟢)"))
+                            }
+                            else -> onEvent(EventCodec.parseEvent(json))
                         }
                     } catch (_: Exception) {
-                        // socket timeout or parsing error, continue loop
+                        // timeout / parse error → keep looping
                     }
                 }
             } catch (e: Exception) {
@@ -328,10 +224,7 @@ object LanBridge {
             } finally {
                 socket?.close()
             }
-        }.apply {
-            isDaemon = true
-            start()
-        }
+        }.apply { isDaemon = true; start() }
     }
 
     fun stopViewerLanReceiver() {
@@ -339,69 +232,43 @@ object LanBridge {
         receiverThread?.interrupt()
         receiverThread = null
         try {
-            if (multicastLock?.isHeld == true) {
-                multicastLock?.release()
-            }
+            if (multicastLock?.isHeld == true) multicastLock?.release()
         } catch (_: Exception) {}
         multicastLock = null
     }
 
-    fun queryLanTelemetry(hostIp: String, timeoutMs: Int = 1800): NativeTelemetry? {
+    fun queryLanTelemetry(context: Context, hostIp: String, timeoutMs: Int = 1800): NativeTelemetry? {
         return try {
             val url = URL("http://$hostIp:$HTTP_PORT/telemetry")
             val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = timeoutMs
-                readTimeout = timeoutMs
+                requestMethod = "GET"; connectTimeout = timeoutMs; readTimeout = timeoutMs
             }
             if (conn.responseCode == 200) {
-                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                val cipher = conn.inputStream.bufferedReader().use { it.readText() }
                 conn.disconnect()
-                val json = JSONObject(text)
-                NativeTelemetry(
-                    battery = json.optInt("battery", -1),
-                    isCharging = json.optBoolean("isCharging", false),
-                    network = "${json.optString("network", "WiFi")} (LAN 🟢)",
-                    lastSeen = json.optLong("lastSeen", System.currentTimeMillis()),
-                    deviceModel = json.optString("deviceModel", "Realme Phone")
-                )
+                val plain = Crypto.decrypt(BridgePreferences.getPairCode(context), cipher) ?: return null
+                val t = EventCodec.parseTelemetry(JSONObject(plain))
+                t.copy(network = "${t.network} (LAN 🟢)")
             } else {
-                conn.disconnect()
-                null
+                conn.disconnect(); null
             }
-        } catch (_: Exception) {
-            null
-        }
+        } catch (_: Exception) { null }
     }
 
-    fun queryLanEvents(hostIp: String, timeoutMs: Int = 2000): List<NativeEvent> {
+    fun queryLanEvents(context: Context, hostIp: String, timeoutMs: Int = 2000): List<NativeEvent> {
         val list = mutableListOf<NativeEvent>()
         try {
             val url = URL("http://$hostIp:$HTTP_PORT/events")
             val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = timeoutMs
-                readTimeout = timeoutMs
+                requestMethod = "GET"; connectTimeout = timeoutMs; readTimeout = timeoutMs
             }
             if (conn.responseCode == 200) {
-                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                val cipher = conn.inputStream.bufferedReader().use { it.readText() }
                 conn.disconnect()
-                val array = JSONArray(text)
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    list.add(
-                        NativeEvent(
-                            id = obj.optString("id", ""),
-                            type = obj.optString("type", "EVENT"),
-                            title = obj.optString("title", ""),
-                            body = obj.optString("body", ""),
-                            sender = obj.optString("sender", ""),
-                            otp = obj.optString("otp", ""),
-                            extra = obj.optString("extra", ""),
-                            timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-                            deviceModel = obj.optString("deviceModel", "Realme")
-                        )
-                    )
+                val plain = Crypto.decrypt(BridgePreferences.getPairCode(context), cipher)
+                if (plain != null) {
+                    val array = JSONArray(plain)
+                    for (i in 0 until array.length()) list.add(EventCodec.parseEvent(array.getJSONObject(i)))
                 }
             } else {
                 conn.disconnect()
@@ -411,7 +278,7 @@ object LanBridge {
     }
 
     // ==========================================
-    // HELPER FUNCTIONS
+    // HELPERS
     // ==========================================
 
     fun getLocalIpAddress(): String? {
@@ -425,9 +292,7 @@ object LanBridge {
                     val addr = addrs.nextElement()
                     if (!addr.isLoopbackAddress && addr is Inet4Address) {
                         val host = addr.hostAddress
-                        if (host != null && !host.startsWith("127.")) {
-                            return host
-                        }
+                        if (host != null && !host.startsWith("127.")) return host
                     }
                 }
             }
@@ -435,7 +300,7 @@ object LanBridge {
         return null
     }
 
-    fun getSubnetBroadcastAddress(): InetAddress? {
+    private fun getSubnetBroadcastAddress(): InetAddress? {
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces()
             while (interfaces.hasMoreElements()) {
@@ -443,12 +308,25 @@ object LanBridge {
                 if (!intf.isUp || intf.isLoopback) continue
                 for (ifAddr in intf.interfaceAddresses) {
                     val broadcast = ifAddr.broadcast
-                    if (broadcast != null && broadcast is Inet4Address) {
-                        return broadcast
-                    }
+                    if (broadcast != null && broadcast is Inet4Address) return broadcast
                 }
             }
         } catch (_: Exception) {}
         return null
+    }
+
+    /** In-memory fallback state for the host when a Context is not available. */
+    private object HostState {
+        @Volatile var latestTelemetry: NativeTelemetry? = null
+        private val history = mutableListOf<NativeEvent>()
+
+        fun addEvent(event: NativeEvent) {
+            synchronized(history) {
+                history.add(0, event)
+                if (history.size > 100) history.removeAt(history.size - 1)
+            }
+        }
+
+        fun recentEvents(): List<NativeEvent> = synchronized(history) { history.toList() }
     }
 }

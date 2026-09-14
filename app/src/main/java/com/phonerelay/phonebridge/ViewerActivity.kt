@@ -8,10 +8,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -214,8 +217,25 @@ class ViewerActivity : AppCompatActivity() {
             startService(serviceIntent)
         }
 
+        // Ask to exempt the viewer from battery optimization so the listener service is not
+        // killed in the background — the single biggest cause of missed events on Xperia/Realme.
+        maybeRequestBatteryExemption()
+
         // Initial fetch
         syncData(isManual = false)
+    }
+
+    private fun maybeRequestBatteryExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun setFilter(filter: String) {

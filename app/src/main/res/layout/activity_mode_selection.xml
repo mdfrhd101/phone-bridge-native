@@ -201,6 +201,38 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Secret Pair Code (E2E key source) -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🔑 Secret Pair Code"
+            android:textColor="@color/text_white"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:layout_marginTop="24dp" />
+
+        <EditText
+            android:id="@+id/etPairCode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:padding="14dp"
+            android:layout_marginTop="8dp"
+            android:hint="e.g. my-family-2914"
+            android:textColorHint="@color/text_muted"
+            android:textColor="@color/text_white"
+            android:textSize="15sp"
+            android:inputType="textVisiblePassword"
+            android:maxLines="1" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="দুই ফোনে হুবহু একই কোড দিন। এই কোড দিয়েই সব ডেটা এনক্রিপ্ট/ডিক্রিপ্ট হয় — কেউ কোড না জানলে কিছুই পড়তে পারবে না।"
+            android:textColor="@color/text_muted"
+            android:textSize="11.5sp"
+            android:layout_marginTop="6dp" />
+
         <Button
             android:id="@+id/btnContinue"
             android:layout_width="match_parent"
