@@ -138,8 +138,10 @@ class ViewerForegroundService : Service() {
                 var conn: HttpURLConnection? = null
                 try {
                     val topic = FirebaseRelay.getPrimaryTopic(this)
+                    val telemetryTopic = FirebaseRelay.getTelemetryTopic(this)
+                    // Comma-separated multi-topic: events + telemetry in one stream.
                     // since=60s replays the last minute on (re)connect so a brief drop loses nothing.
-                    val url = URL("$server/$topic/json?since=60s")
+                    val url = URL("$server/$topic,$telemetryTopic/json?since=60s")
                     conn = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
                         connectTimeout = 8000

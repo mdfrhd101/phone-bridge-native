@@ -60,7 +60,8 @@ object FirebaseRelay {
 
     fun getPrimaryTopic(context: Context): String = getTopics(context).first()
 
-    private fun telemetryTopic(context: Context): String = getPrimaryTopic(context) + "_telemetry"
+    fun getTelemetryTopic(context: Context): String = getPrimaryTopic(context) + "_telemetry"
+    private fun telemetryTopic(context: Context): String = getTelemetryTopic(context)
 
     fun generateDeterministicId(eventType: String, title: String, body: String): String {
         val clean = "${eventType.trim().lowercase()}|${title.trim().lowercase()}|${body.trim().lowercase()}"
